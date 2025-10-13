@@ -265,12 +265,13 @@ function addMessage(sender, text, id = null, isMarkdown = false) {
     senderName.className = 'message-sender';
     senderName.textContent = sender === 'user' ? 'You' : 'ADAL';
     
-    const time = document.createElement('span');
-    time.className = 'message-time';
-    time.textContent = formatTime(new Date());
+    // Remove the time element creation
+    // const time = document.createElement('span');
+    // time.className = 'message-time';
+    // time.textContent = formatTime(new Date());
     
     header.appendChild(senderName);
-    header.appendChild(time);
+    // header.appendChild(time); // Remove this line
     
     const messageText = document.createElement('div');
     messageText.className = 'message-text';
