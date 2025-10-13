@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat With AI - Student</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Add Marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Add Highlight.js for code syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar collapsed" id="sidebar">
+            <!-- Sidebar Header -->
+            <div class="sidebar-header">
+                <!-- Expandable Logo Icon (visible when collapsed) -->
+                <button class="sidebar-expand-btn robot-icon-btn" id="robot-expand-btn" title="Expand sidebar">
+                    <img src="{{ url_for('static', filename='img/adal_iconb.png') }}" alt="Adal" class="robot-logo">
+                    <i class="fas fa-bars hover-icon"></i>
+                </button>
+                
+                <!-- Logo and Close Button (visible when expanded) -->
+                <div class="logo-container">
+                    <div class="logo">
+                        <img src="{{ url_for('static', filename='img/adal_iconb.png') }}" alt="Adal" class="logo-image">
+                        <!-- <span class="sidebar-text">Adal AI</span> -->
+                    </div>
+                    <button class="sidebar-collapse-btn" id="sidebar-collapse-btn" title="Collapse sidebar">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Sidebar Navigation -->
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item" id="new-chat-btn" title="New Chat">
+                    <i class="fas fa-plus"></i>
+                    <span class="sidebar-text">New Chat</span>
+                </a>
+                
+                <div class="nav-divider"></div>
+                
+                <!-- Chat History Section -->
+                <div class="chat-history-section">
+                    <div class="nav-section-title">
+                        <i class="fas fa-history"></i>
+                        <span class="sidebar-text">History</span>
+                    </div>
+                    
+                    <div id="chat-history-list" class="chat-history-list">
+                        <a href="#" class="nav-item chat-history-item" data-chat-id="1" title="Help me understand calculus...">
+                            <i class="fas fa-message"></i>
+                            <span class="sidebar-text">Help me understand calculus...</span>
+                        </a>
+                        
+                        <a href="#" class="nav-item chat-history-item" data-chat-id="2" title="Write an essay about...">
+                            <i class="fas fa-message"></i>
+                            <span class="sidebar-text">Write an essay about...</span>
+                        </a>
+                        
+                        <a href="#" class="nav-item chat-history-item" data-chat-id="3" title="Explain photosynthesis...">
+                            <i class="fas fa-message"></i>
+                            <span class="sidebar-text">Explain photosynthesis...</span>
+                        </a>
+                    </div>
+                </div>
+            </nav>
+            
+            <!-- Sidebar Footer -->
+            <div class="sidebar-footer">
+                <a href="#" class="nav-item" id="feedback-btn" title="Feedback">
+                    <i class="fas fa-comment-dots"></i>
+                    <span class="sidebar-text">Feedback</span>
+                </a>
+                
+                <a href="#" class="nav-item" id="settings-btn" title="Settings">
+                    <i class="fas fa-cog"></i>
+                    <span class="sidebar-text">Settings</span>
+                </a>
+                
+                <div class="nav-divider"></div>
+                
+                <div class="user-profile" title="Student Profile">
+                    <img src="https://ui-avatars.com/api/?name=Student+User&background=10b981&color=fff" alt="User Avatar">
+                    <div class="user-info sidebar-text">
+                        <div class="user-name">Student</div>
+                        <div class="user-email">student@school.edu</div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-header">
+                <h1>ADAL</h1>
+                <div class="header-actions">
+                    <button class="btn-icon" title="Help">
+                        <i class="fas fa-question-circle"></i>
+                    </button>
+                    <button class="btn-icon" id="clear-chat-btn" title="Clear chat">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                </div>
+            </header>
+
+            <div class="chat-area" id="chat-area">
+                <!-- Welcome Screen -->
+                <div class="welcome-screen" id="welcome-screen">
+                    <div class="welcome-avatar">
+                        <img src="{{ url_for('static', filename='img/adal_iconb.png') }}" alt="Adal AI Logo">
+                    </div>
+                    <h2>Welcome, Student</h2>
+                    <p class="welcome-subtitle">Start a conversation with AI-Driven Academic Librarian.<br>What research topic would you like to explore?</p>
+                </div>
+
+                <!-- Chat Messages Area -->
+                <div class="messages-container" id="messages-container">
+                    <!-- Messages will be appended here -->
+                </div>
+                
+                <!-- Input Area -->
+                <div class="input-container">
+                    <div class="input-wrapper">
+                        <input 
+                            type="text" 
+                            id="message-input" 
+                            placeholder="Ask me anything ..." 
+                            autocomplete="off"
+                        />
+                        <button class="input-icon-btn" title="Voice input">
+                            <i class="fas fa-microphone"></i>
+                        </button>
+                        <button class="btn-send" id="send-button" title="Send message">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+</body>
+</html>
