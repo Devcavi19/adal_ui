@@ -305,18 +305,34 @@ body {
 /* Chat Area */
 .chat-area {
     flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    position: relative;
+}
+
+/* Chat Content Wrapper - Scrollable area */
+.chat-content-wrapper {
+    flex: 1;
     overflow-y: auto;
-    padding: 20px;
+    overflow-x: hidden;
+    padding: 20px 24px;
     display: flex;
     flex-direction: column;
 }
 
 /* Welcome Screen */
 .welcome-screen {
+    flex: 1;
     max-width: 900px;
+    width: 100%;
     margin: 0 auto;
     text-align: center;
     padding: 40px 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
 }
 
 .welcome-avatar {
@@ -361,6 +377,7 @@ body {
     margin: 0 auto;
     width: 100%;
     display: none;
+    padding-bottom: 20px;
 }
 
 .messages-container.active {
@@ -537,11 +554,15 @@ body {
     }
 }
 
-/* Input Container */
+/* Input Container - Fixed at bottom */
 .input-container {
     padding: 20px 24px;
-    background-color: transparent;
-    border-top: none;
+    background-color: #ffffff;
+    border-top: transparent;
+    position: sticky;
+    bottom: 0;
+    z-index: 10;
+    flex-shrink: 0;
 }
 
 .input-wrapper {
@@ -773,26 +794,26 @@ body {
 
 /* Scrollbar Styles */
 .sidebar-nav::-webkit-scrollbar,
-.chat-area::-webkit-scrollbar,
+.chat-content-wrapper::-webkit-scrollbar,
 .chat-history-list::-webkit-scrollbar {
     width: 6px;
 }
 
 .sidebar-nav::-webkit-scrollbar-track,
-.chat-area::-webkit-scrollbar-track,
+.chat-content-wrapper::-webkit-scrollbar-track,
 .chat-history-list::-webkit-scrollbar-track {
     background: transparent;
 }
 
 .sidebar-nav::-webkit-scrollbar-thumb,
-.chat-area::-webkit-scrollbar-thumb,
+.chat-content-wrapper::-webkit-scrollbar-thumb,
 .chat-history-list::-webkit-scrollbar-thumb {
     background: #4f4f4f;
     border-radius: 3px;
 }
 
 .sidebar-nav::-webkit-scrollbar-thumb:hover,
-.chat-area::-webkit-scrollbar-thumb:hover,
+.chat-content-wrapper::-webkit-scrollbar-thumb:hover,
 .chat-history-list::-webkit-scrollbar-thumb:hover {
     background: #5f5f5f;
 }

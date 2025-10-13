@@ -110,21 +110,24 @@
             </header>
 
             <div class="chat-area" id="chat-area">
-                <!-- Welcome Screen -->
-                <div class="welcome-screen" id="welcome-screen">
-                    <div class="welcome-avatar">
-                        <img src="{{ url_for('static', filename='img/adal_iconb.png') }}" alt="Adal AI Logo">
+                <!-- Scrollable Content Wrapper -->
+                <div class="chat-content-wrapper">
+                    <!-- Welcome Screen -->
+                    <div class="welcome-screen" id="welcome-screen">
+                            <div class="welcome-avatar">
+                                <img src="{{ url_for('static', filename='img/adal_iconb.png') }}" alt="Adal AI Logo">
+                            </div>
+                            <h2>Welcome, Student</h2>
+                            <p class="welcome-subtitle">Start a conversation with AI-Driven Academic Librarian.<br>What research topic would you like to explore?</p>
+                        </div>
+                        
+                    <!-- Chat Messages Area -->
+                    <div class="messages-container" id="messages-container">
+                        <!-- Messages will be appended here -->
                     </div>
-                    <h2>Welcome, Student</h2>
-                    <p class="welcome-subtitle">Start a conversation with AI-Driven Academic Librarian.<br>What research topic would you like to explore?</p>
-                </div>
-
-                <!-- Chat Messages Area -->
-                <div class="messages-container" id="messages-container">
-                    <!-- Messages will be appended here -->
                 </div>
                 
-                <!-- Input Area -->
+                <!-- Input Area - Fixed at bottom -->
                 <div class="input-container">
                     <div class="input-wrapper">
                         <input 

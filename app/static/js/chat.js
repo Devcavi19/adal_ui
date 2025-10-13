@@ -4,6 +4,7 @@ const messageInput = document.getElementById('message-input');
 const messagesContainer = document.getElementById('messages-container');
 const welcomeScreen = document.getElementById('welcome-screen');
 const chatArea = document.getElementById('chat-area');
+const chatContentWrapper = document.querySelector('.chat-content-wrapper');
 const newChatBtn = document.getElementById('new-chat-btn');
 const feedbackBtn = document.getElementById('feedback-btn');
 const settingsBtn = document.getElementById('settings-btn');
@@ -182,8 +183,8 @@ async function handleSendMessage() {
     
     // Hide welcome screen and show messages
     if (welcomeScreen.style.display !== 'none') {
-        welcomeScreen.style.display = 'none';
-        messagesContainer.classList.add('active');
+            welcomeScreen.style.display = 'none';
+            messagesContainer.classList.add('active');
     }
     
     // Clear input
@@ -439,13 +440,11 @@ async function sendMessageWithStreaming(message, typingId) {
 }
 
 function scrollToBottom() {
-    const container = messagesContainer.classList.contains('active') 
-        ? messagesContainer.parentElement
-        : chatArea;
-    
-    // Smooth scroll to bottom
+    // Scroll the chat content wrapper, not the entire chat area
     setTimeout(() => {
-        container.scrollTop = container.scrollHeight;
+        if (chatContentWrapper) {
+            chatContentWrapper.scrollTop = chatContentWrapper.scrollHeight;
+        }
     }, 10);
 }
 
@@ -461,8 +460,13 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Auto-resize textarea (if needed for future multiline input)
+// Auto-resize textarea for both inputs
 messageInput.addEventListener('input', function() {
+    this.style.height = 'auto';
+    this.style.height = (this.scrollHeight) + 'px';
+});
+
+messageInputBottom.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = (this.scrollHeight) + 'px';
 });
