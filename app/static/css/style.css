@@ -46,6 +46,7 @@ body {
 
 .sidebar.collapsed {
     width: var(--sidebar-collapsed-width);
+    background-color: #ffffff;
 }
 
 /* Sidebar Header */
