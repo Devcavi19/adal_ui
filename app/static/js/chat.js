@@ -8,14 +8,18 @@ const chatContentWrapper = document.querySelector('.chat-content-wrapper');
 const newChatBtn = document.getElementById('new-chat-btn');
 const feedbackBtn = document.getElementById('feedback-btn');
 const settingsBtn = document.getElementById('settings-btn');
-const clearChatBtn = document.getElementById('clear-chat-btn');
+const shareBtn = document.getElementById('share-btn');
 const sidebar = document.getElementById('sidebar');
 const robotExpandBtn = document.getElementById('robot-expand-btn');
 const sidebarCollapseBtn = document.getElementById('sidebar-collapse-btn');
+const userProfileTrigger = document.getElementById('user-profile-trigger');
+const userDropdownMenu = document.getElementById('user-dropdown-menu');
+const logoutBtn = document.getElementById('logout-btn');
 
 // State
 let isTyping = false;
 let currentChatId = null;
+let currentUser = null; // Store user info
 
 // Configure marked.js for better Markdown rendering
 if (typeof marked !== 'undefined') {
@@ -39,6 +43,7 @@ if (typeof marked !== 'undefined') {
 document.addEventListener('DOMContentLoaded', () => {
     setupEventListeners();
     loadChatHistory();
+    fetchCurrentUser(); // Fetch user info on load
     
     // Load sidebar state from localStorage
     const sidebarState = localStorage.getItem('sidebarCollapsed');
@@ -46,6 +51,28 @@ document.addEventListener('DOMContentLoaded', () => {
         sidebar.classList.remove('collapsed');
     }
 });
+
+// Fetch current user information
+async function fetchCurrentUser() {
+    try {
+        const response = await fetch('/api/auth/user');
+        if (response.ok) {
+            const data = await response.json();
+            currentUser = data.user;
+        }
+    } catch (error) {
+        console.error('Error fetching user:', error);
+    }
+}
+
+// Generate avatar URL for user
+function getUserAvatarUrl() {
+    if (!currentUser) {
+        return 'https://ui-avatars.com/api/?name=Student&background=10b981&color=fff';
+    }
+    const name = encodeURIComponent(currentUser.full_name || 'Student');
+    return `https://ui-avatars.com/api/?name=${name}&background=10b981&color=fff`;
+}
 
 function setupEventListeners() {
     // Robot icon expand button
@@ -77,13 +104,11 @@ function setupEventListeners() {
         });
     }
     
-    // Clear chat button
-    if (clearChatBtn) {
-        clearChatBtn.addEventListener('click', (e) => {
+    // Share button
+    if (shareBtn) {
+        shareBtn.addEventListener('click', (e) => {
             e.preventDefault();
-            if (confirm('Are you sure you want to clear this chat?')) {
-                startNewChat();
-            }
+            showShareModal();
         });
     }
     
@@ -94,12 +119,37 @@ function setupEventListeners() {
             showFeedbackModal();
         });
     }
-    
+
     // Settings button
     if (settingsBtn) {
         settingsBtn.addEventListener('click', (e) => {
             e.preventDefault();
             showSettingsModal();
+        });
+    }
+
+    // User profile dropdown
+    if (userProfileTrigger && userDropdownMenu) {
+        userProfileTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            userDropdownMenu.classList.toggle('show');
+            userProfileTrigger.classList.toggle('active');
+        });
+        
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!userProfileTrigger.contains(e.target) && !userDropdownMenu.contains(e.target)) {
+                userDropdownMenu.classList.remove('show');
+                userProfileTrigger.classList.remove('active');
+            }
+        });
+    }
+    
+    // Logout button
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            await handleLogout();
         });
     }
 }
@@ -141,16 +191,32 @@ function loadChatHistory() {
                     <a href="#" class="nav-item chat-history-item" data-chat-id="${chat.id}" title="${escapeHtml(chat.title)}">
                         <i class="fas fa-message"></i>
                         <span class="sidebar-text">${escapeHtml(chat.title)}</span>
+                        <button class="delete-chat-btn" data-chat-id="${chat.id}" title="Delete chat">
+                            <i class="fas fa-trash"></i>
+                        </button>
                     </a>
                 `).join('');
                 
                 // Add click listeners to history items
                 document.querySelectorAll('.chat-history-item').forEach(item => {
                     item.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        loadChat(item.dataset.chatId);
+                        if (!e.target.closest('.delete-chat-btn')) {
+                            e.preventDefault();
+                            loadChat(item.dataset.chatId);
+                        }
                     });
                 });
+                
+                // Add delete listeners
+                document.querySelectorAll('.delete-chat-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        await deleteChat(btn.dataset.chatId);
+                    });
+                });
+            } else {
+                historyList.innerHTML = '<div class="no-history"><span class="sidebar-text">No chat history yet</span></div>';
             }
         })
         .catch(error => console.error('Error loading chat history:', error));
@@ -158,14 +224,66 @@ function loadChatHistory() {
 
 function loadChat(chatId) {
     // Load specific chat from backend
-    console.log('Loading chat:', chatId);
-    currentChatId = chatId;
+    fetch(`/api/chat/${chatId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.chat_id && data.messages) {
+                currentChatId = chatId;
+                
+                // Clear current messages
+                messagesContainer.innerHTML = '';
+                welcomeScreen.style.display = 'none';
+                messagesContainer.classList.add('active');
+                
+                // Load messages
+                if (data.messages.length > 0) {
+                    data.messages.forEach(msg => {
+                        addMessage(msg.role, msg.content, null, msg.role === 'bot');
+                    });
+                    scrollToBottom();
+                }
+                
+                // Update active state
+                document.querySelectorAll('.chat-history-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                document.querySelector(`[data-chat-id="${chatId}"]`)?.classList.add('active');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading chat:', error);
+            alert('Failed to load chat');
+        });
+}
+
+async function deleteChat(chatId) {
+    if (!confirm('Are you sure you want to delete this chat?')) {
+        return;
+    }
     
-    // Update active state
-    document.querySelectorAll('.chat-history-item').forEach(item => {
-        item.classList.remove('active');
-    });
-    document.querySelector(`[data-chat-id="${chatId}"]`)?.classList.add('active');
+    try {
+        const response = await fetch(`/api/chat/${chatId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            // Remove from UI
+            document.querySelector(`[data-chat-id="${chatId}"]`)?.remove();
+            
+            // If it was the current chat, start new
+            if (currentChatId === chatId) {
+                startNewChat();
+            }
+            
+            // Reload history to update UI
+            loadChatHistory();
+        } else {
+            alert('Failed to delete chat');
+        }
+    } catch (error) {
+        console.error('Error deleting chat:', error);
+        alert('Failed to delete chat');
+    }
 }
 
 function showFeedbackModal() {
@@ -173,7 +291,11 @@ function showFeedbackModal() {
 }
 
 function showSettingsModal() {
-    alert('Settings:\n\n- Theme: Light/Dark\n- Language: English\n- Notifications: On/Off\n\nSettings panel coming soon!');
+    alert('Settings feature coming soon!\n\nSettings include:\n\n• Theme: Light/Dark\n• Language: English/Filipino\n• Notifications: On/Off');
+}
+
+function showShareModal() {
+    alert('Share feature coming soon!\n\nYou will be able to share messages and prompts with others.');
 }
 
 async function handleSendMessage() {
@@ -211,26 +333,37 @@ async function handleSendMessage() {
     }
 }
 
-function saveToChatHistory(message) {
-    // Save chat to backend
-    if (!currentChatId) {
-        currentChatId = Date.now().toString();
-        const historyList = document.getElementById('chat-history-list');
-        const newHistoryItem = document.createElement('a');
-        newHistoryItem.href = '#';
-        newHistoryItem.className = 'nav-item chat-history-item active';
-        newHistoryItem.dataset.chatId = currentChatId;
-        newHistoryItem.title = message.substring(0, 50) + '...';
-        newHistoryItem.innerHTML = `
-            <i class="fas fa-message"></i>
-            <span class="sidebar-text">${escapeHtml(message.substring(0, 30))}...</span>
-        `;
-        historyList.insertBefore(newHistoryItem, historyList.firstChild);
-        
-        newHistoryItem.addEventListener('click', (e) => {
-            e.preventDefault();
-            loadChat(currentChatId);
+async function handleLogout() {
+    try {
+        const response = await fetch('/api/auth/signout', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
         });
+        
+        if (response.ok) {
+            // Clear session storage
+            sessionStorage.removeItem('access_token');
+            // Redirect to login
+            window.location.href = '/login';
+        } else {
+            console.error('Logout failed');
+            alert('Failed to log out. Please try again.');
+        }
+    } catch (error) {
+        console.error('Logout error:', error);
+        alert('An error occurred while logging out.');
+    }
+}
+
+function saveToChatHistory(message) {
+    // This is now handled by the backend
+    // Just reload the history list when a new chat starts
+    if (!currentChatId) {
+        setTimeout(() => {
+            loadChatHistory();
+        }, 500);
     }
 }
 
@@ -242,7 +375,7 @@ function addMessage(sender, text, id = null, isMarkdown = false) {
     const avatar = document.createElement('div');
     avatar.className = 'message-avatar';
     
-    // Use image for bot, text for user
+    // Use image for both bot and user
     if (sender === 'bot') {
         const avatarImg = document.createElement('img');
         avatarImg.src = '/static/img/adal_iconb.png';
@@ -252,7 +385,15 @@ function addMessage(sender, text, id = null, isMarkdown = false) {
         avatarImg.style.objectFit = 'contain';
         avatar.appendChild(avatarImg);
     } else {
-        avatar.textContent = 'S';
+        // User avatar - use profile image
+        const avatarImg = document.createElement('img');
+        avatarImg.src = getUserAvatarUrl();
+        avatarImg.alt = currentUser?.full_name || 'Student';
+        avatarImg.style.width = '100%';
+        avatarImg.style.height = '100%';
+        avatarImg.style.objectFit = 'cover';
+        avatarImg.style.borderRadius = '50%';
+        avatar.appendChild(avatarImg);
     }
     
     const content = document.createElement('div');
@@ -263,15 +404,9 @@ function addMessage(sender, text, id = null, isMarkdown = false) {
     
     const senderName = document.createElement('span');
     senderName.className = 'message-sender';
-    senderName.textContent = sender === 'user' ? 'You' : 'ADAL';
-    
-    // Remove the time element creation
-    // const time = document.createElement('span');
-    // time.className = 'message-time';
-    // time.textContent = formatTime(new Date());
+    senderName.textContent = sender === 'user' ? (currentUser?.full_name || 'You') : 'ADAL';
     
     header.appendChild(senderName);
-    // header.appendChild(time); // Remove this line
     
     const messageText = document.createElement('div');
     messageText.className = 'message-text';
@@ -395,41 +530,103 @@ async function sendMessageWithStreaming(message, typingId) {
         // Remove typing indicator
         removeTypingIndicator(typingId);
         
-        // Create message element for streaming response (with plain text first)
-        const botMessageDiv = addMessage('bot', '');
+        // Create message element for streaming response
+        const botMessageDiv = addMessage('bot', '▊'); // Start with cursor
         const messageTextElement = botMessageDiv.querySelector('.message-text');
         
         // Read the stream
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let fullText = '';
+        let isFirstToken = true;
+        let renderQueue = '';
+        let lastRenderTime = 0;
+        const renderInterval = 16; // ~60fps for smooth rendering
+        
+        // Add streaming indicator class
+        messageTextElement.classList.add('streaming');
+        
+        // Optimized render function with RAF for smooth 60fps updates
+        function renderUpdate() {
+            if (renderQueue) {
+                fullText += renderQueue;
+                renderQueue = '';
+                
+                // Fast rendering with markdown
+                if (typeof marked !== 'undefined') {
+                    messageTextElement.innerHTML = marked.parse(fullText + '▊');
+                    addCopyButtonsToCodeBlocks(messageTextElement);
+                } else {
+                    messageTextElement.textContent = fullText + '▊';
+                }
+                
+                scrollToBottom();
+            }
+        }
+        
+        // Use RAF for consistent 60fps rendering
+        let rafId = null;
+        function scheduleRender() {
+            if (!rafId) {
+                rafId = requestAnimationFrame(() => {
+                    renderUpdate();
+                    rafId = null;
+                });
+            }
+        }
         
         while (true) {
             const { done, value } = await reader.read();
             
-            if (done) break;
+            if (done) {
+                // Final render
+                if (renderQueue) {
+                    renderUpdate();
+                }
+                messageTextElement.classList.remove('streaming');
+                break;
+            }
             
-            const chunk = decoder.decode(value);
+            const chunk = decoder.decode(value, { stream: true });
             const lines = chunk.split('\n').filter(line => line.trim());
             
             for (const line of lines) {
                 try {
                     const data = JSON.parse(line);
+                    
+                    // Handle chat_id from server
+                    if (data.chat_id && !currentChatId) {
+                        currentChatId = data.chat_id;
+                        // Reload history to show new chat
+                        setTimeout(() => {
+                            loadChatHistory();
+                        }, 500);
+                    }
+                    
                     if (data.token) {
-                        fullText += data.token;
-                        // Update with markdown rendering
-                        if (typeof marked !== 'undefined') {
-                            messageTextElement.innerHTML = marked.parse(fullText);
-                            addCopyButtonsToCodeBlocks(messageTextElement);
-                        } else {
-                            messageTextElement.textContent = fullText;
+                        // Remove cursor on first token
+                        if (isFirstToken) {
+                            fullText = '';
+                            renderQueue = '';
+                            isFirstToken = false;
                         }
-                        scrollToBottom();
+                        
+                        // Add to render queue and schedule immediate render
+                        renderQueue += data.token;
+                        scheduleRender();
                     }
                 } catch (e) {
                     console.error('Error parsing JSON:', e);
                 }
             }
+        }
+        
+        // Final render without cursor
+        if (typeof marked !== 'undefined') {
+            messageTextElement.innerHTML = marked.parse(fullText);
+            addCopyButtonsToCodeBlocks(messageTextElement);
+        } else {
+            messageTextElement.textContent = fullText;
         }
         
         isTyping = false;
@@ -441,12 +638,13 @@ async function sendMessageWithStreaming(message, typingId) {
 }
 
 function scrollToBottom() {
-    // Scroll the chat content wrapper, not the entire chat area
-    setTimeout(() => {
-        if (chatContentWrapper) {
-            chatContentWrapper.scrollTop = chatContentWrapper.scrollHeight;
-        }
-    }, 10);
+    // Immediate smooth scroll for better streaming UX
+    if (chatContentWrapper) {
+        chatContentWrapper.scrollTo({
+            top: chatContentWrapper.scrollHeight,
+            behavior: 'instant' // instant for real-time feeling
+        });
+    }
 }
 
 function formatTime(date) {
@@ -461,13 +659,8 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Auto-resize textarea for both inputs
+// Auto-resize textarea
 messageInput.addEventListener('input', function() {
-    this.style.height = 'auto';
-    this.style.height = (this.scrollHeight) + 'px';
-});
-
-messageInputBottom.addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = (this.scrollHeight) + 'px';
 });
