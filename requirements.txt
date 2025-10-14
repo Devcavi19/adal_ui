@@ -13,3 +13,4 @@ faiss-cpu
 sentence-transformers
 google-generativeai
 gotrue
+gunicorn
