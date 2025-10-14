@@ -125,8 +125,8 @@ body {
 
 .form-group input:focus {
     outline: none;
-    border-color: #10a37f;
-    box-shadow: 0 0 0 1px #10a37f;
+    border-color: #2d333a;
+    box-shadow: 0 0 0 1px #2d333a;
 }
 
 .password-input-wrapper {
@@ -232,7 +232,7 @@ body {
     font-size: 16px;
     font-weight: 500;
     color: white;
-    background-color: #10a37f;
+    background-color: #2d333a;
     border: none;
     border-radius: 6px;
     cursor: pointer;
@@ -245,7 +245,7 @@ body {
 }
 
 .btn-primary:hover:not(:disabled) {
-    background-color: #1a7f64;
+    background-color: #1a1d23;
 }
 
 .btn-primary:active {
@@ -343,7 +343,7 @@ body {
 }
 
 .auth-footer a:hover {
-    color: #10a37f;
+    color: #2d333a;
 }
 
 .page-footer {
