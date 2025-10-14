@@ -13,6 +13,13 @@ class Config:
     # RAG Configuration
     INDEX_PATH = 'index'
     
-    # Supabase Configuration (for future database integration)
+    # Supabase Configuration
     SUPABASE_URL = os.getenv('SUPABASE_URL')
     SUPABASE_KEY = os.getenv('SUPABASE_KEY')
+    SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_SERVICE_KEY')
+    
+    # Application URL
+    APP_URL = os.getenv('APP_URL', 'http://localhost:5000')
+    
+    # Allowed email domains for CSPC
+    ALLOWED_EMAIL_DOMAINS = ['@cspc.edu.ph', '@my.cspc.edu.ph']
