@@ -32,6 +32,13 @@ body {
     display: flex;
     align-items: center;
     gap: 8px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.auth-branding:hover {
+    opacity: 0.8;
 }
 
 .auth-branding img {
