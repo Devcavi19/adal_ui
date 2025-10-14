@@ -39,6 +39,21 @@ def signup():
 def chat():
     return render_template('chat.html')
 
+@bp.route('/about')
+def about():
+    """About page"""
+    return render_template('about.html')
+
+@bp.route('/charter')
+def charter():
+    """Charter page"""
+    return render_template('charter.html')
+
+@bp.route('/pricing')
+def pricing():
+    """Pricing page"""
+    return render_template('pricing.html')
+
 # Authentication API Routes
 @bp.route('/api/auth/signup', methods=['POST'])
 def api_signup():
