@@ -190,11 +190,11 @@ def build_streaming_chain(persist_dir="index"):
             raise ValueError("GOOGLE_API_KEY not found in environment")
         
         print("🤖 Initializing Gemini LLM...")
-        # Create LLM with streaming
+        # Create LLM with streaming - optimized for speed
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
             google_api_key=api_key,
-            temperature=0.3,
+            temperature=0.2,  # Lower for faster, more focused responses
             max_output_tokens=2048,
             streaming=True
         )
