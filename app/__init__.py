@@ -7,6 +7,14 @@ def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
     
+    # Initialize Supabase Auth
+    try:
+        from .auth_service import auth_service
+        auth_service.init_app(app)
+        print("✅ Supabase authentication initialized")
+    except Exception as e:
+        print(f"❌ Failed to initialize Supabase auth: {str(e)}")
+    
     # Verify GOOGLE_API_KEY is loaded
     google_api_key = os.getenv("GOOGLE_API_KEY")
     if not google_api_key:
@@ -24,7 +32,7 @@ def create_app(config_class=Config):
         from .rag_service import build_streaming_chain
         
         # Check if index exists
-        index_path = app.config.get('INDEX_PATH', 'cbot_stlit/index')
+        index_path = app.config.get('INDEX_PATH', 'index')
         if not os.path.exists(index_path):
             print(f"⚠️  Index path not found: {index_path}")
             print(f"📂 Current directory: {os.getcwd()}")
