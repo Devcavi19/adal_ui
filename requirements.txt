@@ -12,3 +12,4 @@ langchain-huggingface
 faiss-cpu
 sentence-transformers
 google-generativeai
+gotrue
