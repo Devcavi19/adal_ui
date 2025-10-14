@@ -314,8 +314,8 @@ def update_chat_title(chat_id):
 @bp.route('/api/search', methods=['POST'])
 @login_required
 def search_documents():
-    """Search for relevant documents using the retriever"""
-    from .rag_service import is_allowed
+    """Search for relevant documents using the vectorstore"""
+    from .rag_service import is_allowed, smart_retrieve
     
     data = request.get_json()
     query = data.get('query', '')
@@ -323,13 +323,14 @@ def search_documents():
     if not is_allowed(query):
         return jsonify({'error': 'Sorry, I can\'t assist with that.'}), 400
     
-    retriever = current_app.config.get('RAG_RETRIEVER')
+    vectorstore = current_app.config.get('RAG_VECTORSTORE')
     
-    if retriever is None:
+    if vectorstore is None:
         return jsonify({'error': 'Search system unavailable'}), 503
     
     try:
-        docs = retriever.get_relevant_documents(query)
+        # Use smart retrieval
+        docs = smart_retrieve(query, vectorstore)
         
         results = []
         for doc in docs:

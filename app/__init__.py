@@ -38,9 +38,9 @@ def create_app(config_class=Config):
             print(f"📂 Current directory: {os.getcwd()}")
             print(f"📂 Directory contents: {os.listdir('.')}")
         
-        chain, retriever = build_streaming_chain(persist_dir=index_path)
+        chain, vectorstore = build_streaming_chain(persist_dir=index_path)
         app.config['RAG_CHAIN'] = chain
-        app.config['RAG_RETRIEVER'] = retriever
+        app.config['RAG_VECTORSTORE'] = vectorstore  # Store vectorstore instead of retriever
         print("✅ RAG chain initialized successfully")
     except Exception as e:
         print(f"❌ Failed to initialize RAG chain: {str(e)}")
