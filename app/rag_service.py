@@ -34,80 +34,56 @@ def detect_embedding_type(persist_dir="index"):
     
     return "huggingface"  # Default to HuggingFace
 
-def load_vectorstore(persist_dir="index", embedding_type=None):
+def load_retriever(persist_dir="index", embedding_type=None):
     """
-    Load vector store (not retriever) for flexible querying
-    Returns FAISS vectorstore
+    Load retriever with automatic embedding model detection
+    Returns the vector store (not retriever) for flexible querying
     """
     if embedding_type is None:
         embedding_type = detect_embedding_type(persist_dir)
     
-    print(f"🔍 Loading index with {embedding_type} embeddings from {persist_dir}...")
-    
-    # Check if index directory exists
-    if not os.path.exists(persist_dir):
-        raise FileNotFoundError(f"Index directory not found: {persist_dir}")
-    
-    # Check for required FAISS files
-    required_files = ['index.faiss', 'index.pkl']
-    for file in required_files:
-        file_path = os.path.join(persist_dir, file)
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Required index file not found: {file_path}")
+    print(f"🔍 Loading index with {embedding_type} embeddings...")
     
     try:
         if embedding_type == "huggingface":
-            print("📦 Loading HuggingFace embeddings...")
+            # For indexes created with open-source models
+            # Use the same model that was used for ingestion
             embeddings = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2",
-                model_kwargs={'device': 'cpu'},
+                model_name="sentence-transformers/all-MiniLM-L6-v2",  # Match your ingestion model
+                model_kwargs={'device': 'cpu'},  # Use CPU for local inference
                 encode_kwargs={'normalize_embeddings': True}
             )
-            print(f"✅ HuggingFace embeddings loaded (dimension: 384)")
         else:
-            print("📦 Loading Gemini embeddings...")
-            api_key = os.getenv("GOOGLE_API_KEY")
-            if not api_key:
-                raise ValueError("GOOGLE_API_KEY not found in environment")
-            
+            # For indexes created with Gemini API
             embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/embedding-001",
-                google_api_key=api_key,
-                task_type="retrieval_document"
+                model="models/gemini-embedding-001",
+                task_type="RETRIEVAL_QUERY",
+                async_client=False
             )
-            print(f"✅ Gemini embeddings loaded (dimension: 768)")
         
-        print(f"📂 Loading FAISS index from {persist_dir}...")
-        vs = FAISS.load_local(
-            persist_dir, 
-            embeddings, 
-            allow_dangerous_deserialization=True
-        )
+        vs = FAISS.load_local(persist_dir, embeddings, allow_dangerous_deserialization=True)
         print(f"✅ Successfully loaded index with {embedding_type} embeddings")
-        print(f"📊 Index info: {vs.index.ntotal} vectors")
-        
         return vs
         
-    except AssertionError as e:
-        print(f"❌ Dimension mismatch error with {embedding_type} embeddings")
+    except Exception as e:
+        print(f"❌ Failed to load with {embedding_type} embeddings: {e}")
         
-        # Try fallback
+        # Try the other embedding type as fallback
         fallback_type = "gemini" if embedding_type == "huggingface" else "huggingface"
         print(f"🔄 Trying fallback: {fallback_type} embeddings...")
         
         try:
             if fallback_type == "huggingface":
                 embeddings = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2",
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",  # Match your ingestion model
                     model_kwargs={'device': 'cpu'},
                     encode_kwargs={'normalize_embeddings': True}
                 )
             else:
-                api_key = os.getenv("GOOGLE_API_KEY")
                 embeddings = GoogleGenerativeAIEmbeddings(
-                    model="models/embedding-001",
-                    google_api_key=api_key,
-                    task_type="retrieval_document"
+                    model="models/gemini-embedding-001",
+                    task_type="RETRIEVAL_QUERY",
+                    async_client=False
                 )
             
             vs = FAISS.load_local(persist_dir, embeddings, allow_dangerous_deserialization=True)
@@ -115,13 +91,18 @@ def load_vectorstore(persist_dir="index", embedding_type=None):
             return vs
             
         except Exception as e2:
-            print(f"❌ Both embedding types failed: {str(e2)}")
+            print(f"❌ Both embedding types failed. Error: {e2}")
             raise e2
-    
-    except Exception as e:
-        print(f"❌ Failed to load vectorstore: {str(e)}")
-        print(f"📋 Traceback: {traceback.format_exc()}")
-        raise e
+
+
+# Keep load_vectorstore as an alias for compatibility with existing code
+def load_vectorstore(persist_dir="index", embedding_type=None):
+    """
+    Load vector store (not retriever) for flexible querying
+    Returns FAISS vectorstore
+    Alias for load_retriever for backward compatibility
+    """
+    return load_retriever(persist_dir, embedding_type)
 
 
 def is_exhaustive_query(query: str) -> bool:
@@ -156,6 +137,9 @@ def smart_retrieve(query: str, vectorstore):
             print(f"📊 Sample scores (top 10): min={min(scores):.3f}, max={max(scores):.3f}")
         
         # Dynamic threshold based on score distribution
+        # For HuggingFace: typically 0.8-1.5 range, use higher threshold
+        # For Gemini: typically 0.3-0.8 range, use lower threshold
+        # Strategy: Take documents within 150% of the best score
         if docs_with_scores:
             best_score = docs_with_scores[0][1]
             # Use adaptive threshold: 1.5x the best score, capped at 2.0
@@ -253,14 +237,16 @@ except Exception as e:
     file_content2 = ""
 
 
-SYSTEM_PROMPT = f"""You are Adal, an AI assistant specialized in CSPC (Camarines Sur Polytechnic College) thesis and academic research retrieval.
+SYSTEM_PROMPT = f"""
+You are Adal, an AI assistant specialized in CSPC (Camarines Sur Polytechnic College) thesis and academic research retrieval.
 
 You were created and are maintained by TEAM VIRGO.
 
 Your current knowledge base only includes theses and research coming from the following CSPC colleges: BSM, BSN, CAS, CCS, and CTHBM. Note that the CCS collection does not yet contain Computer Science theses, and there are no engineering theses available in your data.
 
 First:
- - Read the {file_content2} and look for clues that will help you answer the question and provide the URL.
+ -Read the \n{file_content2} and look for clue that will help you answer the question and provide the url.
+
 
 CORE RESPONSIBILITIES:
 - Help users discover and explore CSPC thesis documents and academic research
@@ -292,49 +278,77 @@ CITATION FORMAT:
 Use APA style
 Example: [Santos et al. AI in Education. 2023. Computer Science Dept, CSPC]
 
-Context from documents:
-{{context}}
+Remember: You are helping unlock CSPC's academic knowledge for the research community."""
 
-User Question: {{question}}
+prompt = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_PROMPT),
+    ("human", "Question: {question}\n\nContext:\n{context}"),
+])
 
-Answer:"""
+
+def build_chain(embedding_type=None) -> Tuple:
+    """
+    Build basic RAG chain (non-streaming) - matches rag_chain.py exactly
+    Returns: (chain, vectorstore)
+    """
+    vectorstore = load_retriever(embedding_type=embedding_type)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    
+    # Create a custom retrieval function that uses smart_retrieve
+    def custom_retrieve(question: str) -> str:
+        docs = smart_retrieve(question, vectorstore)
+        return format_docs(docs)
+    
+    # Build chain with smart retrieval integration
+    chain = (
+        {
+            "context": lambda x: custom_retrieve(x), 
+            "question": RunnablePassthrough()
+        }
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+    
+    # Return both chain and vectorstore for flexibility
+    return chain, vectorstore
 
 
 def build_streaming_chain(persist_dir="index"):
     """
     Build RAG chain with streaming support and smart retrieval for Flask
+    Uses same configuration as build_chain but with streaming enabled
     Returns: (chain, vectorstore)
     """
     try:
         print("🚀 Building streaming RAG chain with smart retrieval...")
         
-        # Load vectorstore
-        vectorstore = load_vectorstore(persist_dir)
+        # Load vectorstore using the same function as build_chain
+        vectorstore = load_retriever(persist_dir)
         
-        # Get API key
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            raise ValueError("GOOGLE_API_KEY not found in environment")
-        
-        print("🤖 Initializing Gemini LLM...")
-        # Create LLM with streaming - optimized for speed
+        print("🤖 Initializing Gemini LLM with streaming...")
+        # Create LLM with streaming - using same model as rag_chain.py
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
-            google_api_key=api_key,
-            temperature=0.2,
-            max_output_tokens=2048,
+            temperature=0,
             streaming=True
         )
-        
-        # Create prompt template
-        prompt = ChatPromptTemplate.from_template(SYSTEM_PROMPT)
         
         # Create custom retrieval function that uses smart_retrieve
         def custom_retrieve(question: str) -> str:
             docs = smart_retrieve(question, vectorstore)
-            return format_docs(docs)
+            formatted = format_docs(docs)
+            
+            # Log context size to detect overload
+            print(f"📏 Context size: {len(formatted)} chars, {len(docs)} docs")
+            
+            # Warn if context is too large
+            if len(formatted) > 50000:
+                print(f"⚠️  Large context detected ({len(formatted)} chars) - may cause truncation")
+            
+            return formatted
         
-        # Build chain with smart retrieval
+        # Build chain with smart retrieval - using same structure as rag_chain.py
         chain = (
             {
                 "context": lambda x: custom_retrieve(x),
@@ -346,6 +360,9 @@ def build_streaming_chain(persist_dir="index"):
         )
         
         print("✅ Streaming RAG chain with smart retrieval built successfully")
+        print(f"   - Model: gemini-2.5-flash")
+        print(f"   - Temperature: 0")
+        print(f"   - Streaming: enabled")
         return chain, vectorstore
         
     except Exception as e:

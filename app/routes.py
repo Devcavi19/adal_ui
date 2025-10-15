@@ -161,11 +161,11 @@ def api_get_user():
         return jsonify({'user': session['user']}), 200
     return jsonify({'error': 'Not authenticated'}), 401
 
-# Chat API Routes - OPTIMIZED FOR STREAMING
+# Chat API Routes - OPTIMIZED FOR STREAMING WITH IMPROVED ERROR HANDLING
 @bp.route('/api/chat', methods=['POST'])
 @login_required
 def chat_api():
-    """Handle chat messages with OPTIMIZED streaming (save to DB after streaming)"""
+    """Handle chat messages with OPTIMIZED streaming and better error handling"""
     from .rag_service import is_allowed
     from .auth_service import auth_service
     
@@ -174,7 +174,7 @@ def chat_api():
         user_message = data.get('message', '')
         chat_id = data.get('chat_id', None)
         
-        print(f"📨 Received message: {user_message}")
+        print(f"📨 Received message: {user_message[:100]}...")
         
         if not is_allowed(user_message):
             return jsonify({'error': 'Sorry, I can\'t assist with that.'}), 400
@@ -205,10 +205,12 @@ def chat_api():
                 for char in response:
                     yield json.dumps({'token': char}) + '\n'
                     time.sleep(0.03)
+                yield json.dumps({'done': True, 'error': 'system_unavailable'}) + '\n'
             
             return Response(generate_fallback(), mimetype='application/json')
         
         bot_response = ""
+        stream_error = None
         
         def save_messages_async():
             """Save messages to database in background thread AFTER streaming completes"""
@@ -222,7 +224,7 @@ def chat_api():
                 else:
                     print(f"⚠️  Failed to save user message: {msg_result}")
                 
-                # Save bot response
+                # Save bot response (even if partial due to error)
                 if bot_response:
                     msg_result, msg_status = auth_service.save_chat_message(chat_id, 'bot', bot_response)
                     if msg_status == 200:
@@ -235,42 +237,105 @@ def chat_api():
                 print(f"📋 Traceback: {traceback.format_exc()}")
         
         def generate():
-            nonlocal bot_response
+            nonlocal bot_response, stream_error
             try:
-                print(f"🔄 Starting FAST RAG stream (NO database blocking)...")
+                print(f"🔄 Starting streaming with enhanced monitoring...")
                 chunk_count = 0
+                start_time = time.time()
+                max_chunks = 10000  # ✅ Safety limit to prevent infinite loops
+                last_chunk_time = start_time
                 
                 # Send chat_id FIRST - immediate flush
                 yield json.dumps({'chat_id': chat_id}) + '\n'
                 
-                # Stream the response IMMEDIATELY with aggressive flushing
+                # Stream the response with monitoring
                 for chunk in chain.stream(user_message):
                     if chunk:
                         bot_response += chunk
                         chunk_count += 1
+                        current_time = time.time()
+                        
+                        # ✅ Safety check for max chunks
+                        if chunk_count > max_chunks:
+                            print(f"⚠️  Hit max chunk limit ({max_chunks}) - stopping stream")
+                            stream_error = "response_too_long"
+                            break
+                        
+                        # ✅ Timeout check (if no chunks for 30 seconds)
+                        if current_time - last_chunk_time > 30:
+                            print(f"⚠️  Stream timeout - no chunks for 30s")
+                            stream_error = "stream_timeout"
+                            break
+                        
+                        last_chunk_time = current_time
+                        
                         # Yield each token immediately - no buffering
                         yield json.dumps({'token': chunk}) + '\n'
+                        
+                        # ✅ Log progress every 100 chunks
+                        if chunk_count % 100 == 0:
+                            elapsed = current_time - start_time
+                            print(f"📊 Progress: {chunk_count} chunks, {len(bot_response)} chars, {elapsed:.1f}s")
                 
-                print(f"✅ Streamed {chunk_count} chunks (total: {len(bot_response)} chars)")
+                elapsed_time = time.time() - start_time
+                print(f"✅ Stream completed: {chunk_count} chunks, {len(bot_response)} chars in {elapsed_time:.2f}s")
+                
+                # ✅ Send completion signal with metadata
+                completion_data = {
+                    'done': True,
+                    'chunks': chunk_count,
+                    'chars': len(bot_response),
+                    'time': round(elapsed_time, 2)
+                }
+                
+                if stream_error:
+                    completion_data['warning'] = stream_error
+                    print(f"⚠️  Stream completed with warning: {stream_error}")
+                
+                yield json.dumps(completion_data) + '\n'
                 
                 # Save to database AFTER streaming completes (in background thread)
                 threading.Thread(target=save_messages_async, daemon=True).start()
                 
             except Exception as e:
-                error_msg = "An error occurred while processing your request."
-                print(f"❌ Error in RAG chain: {str(e)}")
+                # ✅ Better error handling with actual error message
+                error_type = type(e).__name__
+                error_msg = str(e)
+                print(f"❌ Error in RAG chain ({error_type}): {error_msg}")
                 print(f"📋 Traceback: {traceback.format_exc()}")
                 
-                # Stream error message
-                for char in error_msg:
-                    yield json.dumps({'token': char}) + '\n'
+                # If we have partial response, send it
+                if bot_response:
+                    print(f"⚠️  Sending partial response ({len(bot_response)} chars)")
+                
+                # Send error with details
+                error_data = {
+                    'error': 'An error occurred while generating the response.',
+                    'error_type': error_type,
+                    'done': True,
+                    'partial': len(bot_response) > 0
+                }
+                
+                # Don't expose internal errors to user, but log them
+                if 'timeout' in error_msg.lower():
+                    error_data['user_message'] = 'The request took too long. Please try a simpler question.'
+                elif 'rate' in error_msg.lower() or 'quota' in error_msg.lower():
+                    error_data['user_message'] = 'The service is currently busy. Please try again in a moment.'
+                else:
+                    error_data['user_message'] = 'An unexpected error occurred. Please try again.'
+                
+                yield json.dumps(error_data) + '\n'
+                
+                # Still save partial response if available
+                if bot_response:
+                    threading.Thread(target=save_messages_async, daemon=True).start()
         
         return Response(generate(), mimetype='application/json')
         
     except Exception as e:
         print(f"❌ Error in chat_api: {str(e)}")
         print(f"📋 Traceback: {traceback.format_exc()}")
-        return jsonify({'error': 'Internal server error'}), 500
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
 
 @bp.route('/api/chat/history', methods=['GET'])
 @login_required
