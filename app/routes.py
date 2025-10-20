@@ -161,12 +161,12 @@ def api_get_user():
         return jsonify({'user': session['user']}), 200
     return jsonify({'error': 'Not authenticated'}), 401
 
-# Chat API Routes - OPTIMIZED FOR STREAMING WITH IMPROVED ERROR HANDLING
+# Chat API Routes - WITH CONVERSATION MEMORY
 @bp.route('/api/chat', methods=['POST'])
 @login_required
 def chat_api():
-    """Handle chat messages with OPTIMIZED streaming and better error handling"""
-    from .rag_service import is_allowed
+    """Handle chat messages with conversation memory and streaming"""
+    from .rag_service import is_allowed, format_chat_history
     from .auth_service import auth_service
     
     try:
@@ -183,7 +183,7 @@ def chat_api():
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
-        # Create new chat session if needed (lightweight operation)
+        # Create new chat session if needed
         if not chat_id:
             title = user_message[:50] + ('...' if len(user_message) > 50 else '')
             chat_session, status = auth_service.create_chat_session(user_id, title)
@@ -194,6 +194,17 @@ def chat_api():
             
             chat_id = chat_session['id']
             print(f"✅ Created new chat session: {chat_id}")
+        
+        # 🆕 Fetch conversation history from database
+        messages, status = auth_service.get_chat_messages(chat_id)
+        
+        chat_history = ""
+        if status == 200 and messages:
+            # Format last 5 exchanges for context (limit to prevent token overflow)
+            chat_history = format_chat_history(messages, max_exchanges=5)
+            print(f"📚 Loaded {len(messages)} total messages, using last {min(10, len(messages))} for context")
+        else:
+            print(f"📚 No previous conversation history")
         
         chain = current_app.config.get('RAG_CHAIN')
         
@@ -239,29 +250,37 @@ def chat_api():
         def generate():
             nonlocal bot_response, stream_error
             try:
-                print(f"🔄 Starting streaming with enhanced monitoring...")
+                print(f"🔄 Starting streaming with conversation memory...")
                 chunk_count = 0
                 start_time = time.time()
-                max_chunks = 10000  # ✅ Safety limit to prevent infinite loops
+                max_chunks = 10000  # Safety limit to prevent infinite loops
                 last_chunk_time = start_time
                 
                 # Send chat_id FIRST - immediate flush
                 yield json.dumps({'chat_id': chat_id}) + '\n'
                 
+                # 🆕 Prepare chain input with conversation history
+                chain_input = {
+                    "question": user_message,
+                    "chat_history": chat_history
+                }
+                
+                print(f"🧠 Using conversation context: {len(chat_history)} chars")
+                
                 # Stream the response with monitoring
-                for chunk in chain.stream(user_message):
+                for chunk in chain.stream(chain_input):
                     if chunk:
                         bot_response += chunk
                         chunk_count += 1
                         current_time = time.time()
                         
-                        # ✅ Safety check for max chunks
+                        # Safety check for max chunks
                         if chunk_count > max_chunks:
                             print(f"⚠️  Hit max chunk limit ({max_chunks}) - stopping stream")
                             stream_error = "response_too_long"
                             break
                         
-                        # ✅ Timeout check (if no chunks for 30 seconds)
+                        # Timeout check (if no chunks for 30 seconds)
                         if current_time - last_chunk_time > 30:
                             print(f"⚠️  Stream timeout - no chunks for 30s")
                             stream_error = "stream_timeout"
@@ -272,7 +291,7 @@ def chat_api():
                         # Yield each token immediately - no buffering
                         yield json.dumps({'token': chunk}) + '\n'
                         
-                        # ✅ Log progress every 100 chunks
+                        # Log progress every 100 chunks
                         if chunk_count % 100 == 0:
                             elapsed = current_time - start_time
                             print(f"📊 Progress: {chunk_count} chunks, {len(bot_response)} chars, {elapsed:.1f}s")
@@ -280,7 +299,7 @@ def chat_api():
                 elapsed_time = time.time() - start_time
                 print(f"✅ Stream completed: {chunk_count} chunks, {len(bot_response)} chars in {elapsed_time:.2f}s")
                 
-                # ✅ Send completion signal with metadata
+                # Send completion signal with metadata
                 completion_data = {
                     'done': True,
                     'chunks': chunk_count,
@@ -298,7 +317,7 @@ def chat_api():
                 threading.Thread(target=save_messages_async, daemon=True).start()
                 
             except Exception as e:
-                # ✅ Better error handling with actual error message
+                # Better error handling with actual error message
                 error_type = type(e).__name__
                 error_msg = str(e)
                 print(f"❌ Error in RAG chain ({error_type}): {error_msg}")

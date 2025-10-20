@@ -49,8 +49,8 @@ def load_retriever(persist_dir="index", embedding_type=None):
             # For indexes created with open-source models
             # Use the same model that was used for ingestion
             embeddings = HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2",  # Match your ingestion model
-                model_kwargs={'device': 'cpu'},  # Use CPU for local inference
+                model_name="sentence-transformers/all-MiniLM-L6-v2",
+                model_kwargs={'device': 'cpu'},
                 encode_kwargs={'normalize_embeddings': True}
             )
         else:
@@ -75,7 +75,7 @@ def load_retriever(persist_dir="index", embedding_type=None):
         try:
             if fallback_type == "huggingface":
                 embeddings = HuggingFaceEmbeddings(
-                    model_name="sentence-transformers/all-MiniLM-L6-v2",  # Match your ingestion model
+                    model_name="sentence-transformers/all-MiniLM-L6-v2",
                     model_kwargs={'device': 'cpu'},
                     encode_kwargs={'normalize_embeddings': True}
                 )
@@ -137,12 +137,8 @@ def smart_retrieve(query: str, vectorstore):
             print(f"📊 Sample scores (top 10): min={min(scores):.3f}, max={max(scores):.3f}")
         
         # Dynamic threshold based on score distribution
-        # For HuggingFace: typically 0.8-1.5 range, use higher threshold
-        # For Gemini: typically 0.3-0.8 range, use lower threshold
-        # Strategy: Take documents within 150% of the best score
         if docs_with_scores:
             best_score = docs_with_scores[0][1]
-            # Use adaptive threshold: 1.5x the best score, capped at 2.0
             threshold = min(best_score * 1.5, 2.0)
             print(f"🎯 Using adaptive threshold: {threshold:.3f} (based on best score: {best_score:.3f})")
             
@@ -214,6 +210,37 @@ def format_docs(docs):
     return "\n\n".join(out)
 
 
+def format_chat_history(messages: list, max_exchanges: int = 5) -> str:
+    """
+    Format chat history for inclusion in the prompt
+    
+    Args:
+        messages: List of message dicts with 'role' and 'content'
+        max_exchanges: Maximum number of exchanges to include (default 5 = 10 messages)
+    
+    Returns:
+        Formatted string of conversation history
+    """
+    if not messages:
+        return ""
+    
+    # Take last N messages (max_exchanges * 2 for user+bot pairs)
+    recent_messages = messages[-(max_exchanges * 2):]
+    
+    history_lines = []
+    for msg in recent_messages:
+        role = "Human" if msg['role'] == 'user' else "Assistant"
+        content = msg['content']
+        
+        # Truncate very long messages to prevent token overflow
+        if len(content) > 500:
+            content = content[:500] + "..."
+        
+        history_lines.append(f"{role}: {content}")
+    
+    return "\n".join(history_lines)
+
+
 # Load abstract and title data files
 try:
     abstract_file = os.path.join("index", "data_abstract.txt")
@@ -254,10 +281,12 @@ CORE RESPONSIBILITIES:
 - Generate proper APA citations for thesis sources
 - Suggest related research based on semantic similarity
 - Handle both specific queries (returns top relevant results) and exhaustive queries (returns all matching results)
+- Maintain conversation context and refer back to previous exchanges when relevant
 
 RESPONSE GUIDELINES:
 - Always answer based STRICTLY on the provided context
 - Always answer direct to the point
+- Use conversation history to provide contextual responses (e.g., "As I mentioned earlier...", "Regarding the thesis we discussed...")
 - If information is not in the context, clearly state "I didn't find that information in my knowledge base, but you can try rephrasing your question and I'll search again"
 - When providing abstracts, give the COMPLETE abstract text if available in context
 - For thesis-related queries, prioritize abstract and metadata information
@@ -273,6 +302,7 @@ QUERY TYPES TO HANDLE:
 - "How many theses about [topic]?" → Count and list all matching theses
 - "Who wrote about [subject]?" → Identify authors and their work
 - "What department studies [field]?" → Identify relevant departments and their research
+- Follow-up questions → Use conversation history to maintain context
 
 CITATION FORMAT:
 Use APA style
@@ -280,9 +310,10 @@ Example: [Santos et al. AI in Education. 2023. Computer Science Dept, CSPC]
 
 Remember: You are helping unlock CSPC's academic knowledge for the research community."""
 
-prompt = ChatPromptTemplate.from_messages([
+# Updated prompt template with conversation history
+CONVERSATIONAL_PROMPT = ChatPromptTemplate.from_messages([
     ("system", SYSTEM_PROMPT),
-    ("human", "Question: {question}\n\nContext:\n{context}"),
+    ("human", "{chat_history}\n\nCurrent Question: {question}\n\nRelevant Context:\n{context}"),
 ])
 
 
@@ -295,17 +326,19 @@ def build_chain(embedding_type=None) -> Tuple:
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
     
     # Create a custom retrieval function that uses smart_retrieve
-    def custom_retrieve(question: str) -> str:
+    def custom_retrieve(inputs: dict) -> str:
+        question = inputs.get("question", "")
         docs = smart_retrieve(question, vectorstore)
         return format_docs(docs)
     
-    # Build chain with smart retrieval integration
+    # Build chain with smart retrieval integration and conversation history
     chain = (
         {
-            "context": lambda x: custom_retrieve(x), 
-            "question": RunnablePassthrough()
+            "context": custom_retrieve, 
+            "question": lambda x: x.get("question", ""),
+            "chat_history": lambda x: x.get("chat_history", "")
         }
-        | prompt
+        | CONVERSATIONAL_PROMPT
         | llm
         | StrOutputParser()
     )
@@ -316,12 +349,12 @@ def build_chain(embedding_type=None) -> Tuple:
 
 def build_streaming_chain(persist_dir="index"):
     """
-    Build RAG chain with streaming support and smart retrieval for Flask
+    Build RAG chain with streaming support, smart retrieval, and conversation memory
     Uses same configuration as build_chain but with streaming enabled
     Returns: (chain, vectorstore)
     """
     try:
-        print("🚀 Building streaming RAG chain with smart retrieval...")
+        print("🚀 Building streaming RAG chain with conversation memory...")
         
         # Load vectorstore using the same function as build_chain
         vectorstore = load_retriever(persist_dir)
@@ -335,7 +368,8 @@ def build_streaming_chain(persist_dir="index"):
         )
         
         # Create custom retrieval function that uses smart_retrieve
-        def custom_retrieve(question: str) -> str:
+        def custom_retrieve(inputs: dict) -> str:
+            question = inputs.get("question", "")
             docs = smart_retrieve(question, vectorstore)
             formatted = format_docs(docs)
             
@@ -348,21 +382,23 @@ def build_streaming_chain(persist_dir="index"):
             
             return formatted
         
-        # Build chain with smart retrieval - using same structure as rag_chain.py
+        # Build chain with smart retrieval and conversation history
         chain = (
             {
-                "context": lambda x: custom_retrieve(x),
-                "question": RunnablePassthrough()
+                "context": custom_retrieve,
+                "question": lambda x: x.get("question", ""),
+                "chat_history": lambda x: x.get("chat_history", "")
             }
-            | prompt
+            | CONVERSATIONAL_PROMPT
             | llm
             | StrOutputParser()
         )
         
-        print("✅ Streaming RAG chain with smart retrieval built successfully")
+        print("✅ Streaming RAG chain with conversation memory built successfully")
         print(f"   - Model: gemini-2.5-flash")
         print(f"   - Temperature: 0")
         print(f"   - Streaming: enabled")
+        print(f"   - Conversation memory: enabled")
         return chain, vectorstore
         
     except Exception as e:
