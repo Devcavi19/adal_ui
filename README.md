@@ -53,6 +53,20 @@ flask-chatbot
    pip install -r requirements.txt
    ```
 
+# Dot environment setup guide
+1. Create a `.env` file in the root directory of the project.
+2. Add the following environment variables to the `.env` file:
+   ```
+   GOOGLE_API_KEY="your api"
+   SUPABASE_URL="https://yoursupabaseurl.supabase.co"
+   SUPABASE_KEY="your supabase api key"
+   SUPABASE_SERVICE_KEY="your supabase service key"
+   SECRET_KEY="your secret key"
+   # FLASK_ENV=production
+   DEBUG=True
+   APP_URL=http://localhost:5000
+   ```
+
 ## Usage
 
 1. Run the application:
