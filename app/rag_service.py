@@ -6,14 +6,21 @@ from typing import Tuple, Generator
 from langchain_community.vectorstores import FAISS
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 from langchain_huggingface import HuggingFaceEmbeddings
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema.output_parser import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 import os
 import traceback
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Configure logger
+logger = logging.getLogger(__name__)
+
+# Get base directory for reliable path resolution
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Content moderation
 DISALLOWED = ("how to make a bomb", "explosive materials", "hatred", "self-harm")
@@ -23,10 +30,13 @@ def is_allowed(question: str) -> bool:
     ql = question.lower()
     return not any(term in ql for term in DISALLOWED)
 
-def detect_embedding_type(persist_dir="index"):
+def detect_embedding_type(persist_dir=None):
     """
     Detect which embedding model was used to create the index
     """
+    if persist_dir is None:
+        persist_dir = os.path.join(BASE_DIR, "index")
+    
     metadata_file = os.path.join(persist_dir, "embedding_model.txt")
     if os.path.exists(metadata_file):
         with open(metadata_file, 'r') as f:
@@ -34,15 +44,18 @@ def detect_embedding_type(persist_dir="index"):
     
     return "huggingface"  # Default to HuggingFace
 
-def load_retriever(persist_dir="index", embedding_type=None):
+def load_retriever(persist_dir=None, embedding_type=None):
     """
     Load retriever with automatic embedding model detection
     Returns the vector store (not retriever) for flexible querying
     """
+    if persist_dir is None:
+        persist_dir = os.path.join(BASE_DIR, "index")
+    
     if embedding_type is None:
         embedding_type = detect_embedding_type(persist_dir)
     
-    print(f"🔍 Loading index with {embedding_type} embeddings...")
+    logger.info(f"Loading index with {embedding_type} embeddings...")
     
     try:
         if embedding_type == "huggingface":
@@ -62,15 +75,15 @@ def load_retriever(persist_dir="index", embedding_type=None):
             )
         
         vs = FAISS.load_local(persist_dir, embeddings, allow_dangerous_deserialization=True)
-        print(f"✅ Successfully loaded index with {embedding_type} embeddings")
+        logger.info(f"Successfully loaded index with {embedding_type} embeddings")
         return vs
         
     except Exception as e:
-        print(f"❌ Failed to load with {embedding_type} embeddings: {e}")
+        logger.warning(f"Failed to load with {embedding_type} embeddings: {e}")
         
         # Try the other embedding type as fallback
         fallback_type = "gemini" if embedding_type == "huggingface" else "huggingface"
-        print(f"🔄 Trying fallback: {fallback_type} embeddings...")
+        logger.info(f"Trying fallback: {fallback_type} embeddings...")
         
         try:
             if fallback_type == "huggingface":
@@ -87,16 +100,16 @@ def load_retriever(persist_dir="index", embedding_type=None):
                 )
             
             vs = FAISS.load_local(persist_dir, embeddings, allow_dangerous_deserialization=True)
-            print(f"✅ Successfully loaded index with {fallback_type} embeddings (fallback)")
+            logger.info(f"Successfully loaded index with {fallback_type} embeddings (fallback)")
             return vs
             
         except Exception as e2:
-            print(f"❌ Both embedding types failed. Error: {e2}")
+            logger.error(f"Both embedding types failed. Error: {e2}")
             raise e2
 
 
 # Keep load_vectorstore as an alias for compatibility with existing code
-def load_vectorstore(persist_dir="index", embedding_type=None):
+def load_vectorstore(persist_dir=None, embedding_type=None):
     """
     Load vector store (not retriever) for flexible querying
     Returns FAISS vectorstore
@@ -128,13 +141,13 @@ def smart_retrieve(query: str, vectorstore):
     
     if is_exhaustive:
         # Exhaustive query: retrieve more docs and filter by similarity threshold
-        print(f"🔍 Detected exhaustive query - using adaptive retrieval (k=50)")
+        logger.debug(f"Detected exhaustive query - using adaptive retrieval (k=50)")
         docs_with_scores = vectorstore.similarity_search_with_score(query, k=50)
         
         # Debug: Show score distribution
         if docs_with_scores:
             scores = [score for _, score in docs_with_scores[:10]]
-            print(f"📊 Sample scores (top 10): min={min(scores):.3f}, max={max(scores):.3f}")
+            logger.debug(f"Sample scores (top 10): min={min(scores):.3f}, max={max(scores):.3f}")
         
         # Dynamic threshold based on score distribution
         # For HuggingFace: typically 0.8-1.5 range, use higher threshold
@@ -144,17 +157,17 @@ def smart_retrieve(query: str, vectorstore):
             best_score = docs_with_scores[0][1]
             # Use adaptive threshold: 1.5x the best score, capped at 2.0
             threshold = min(best_score * 1.5, 2.0)
-            print(f"🎯 Using adaptive threshold: {threshold:.3f} (based on best score: {best_score:.3f})")
+            logger.debug(f"Using adaptive threshold: {threshold:.3f} (based on best score: {best_score:.3f})")
             
             filtered_docs = [doc for doc, score in docs_with_scores if score <= threshold]
         else:
             filtered_docs = []
         
-        print(f"✅ Retrieved {len(filtered_docs)} relevant documents")
+        logger.debug(f"Retrieved {len(filtered_docs)} relevant documents")
         return filtered_docs
     else:
         # Standard semantic search: top-k most relevant
-        print(f"🔍 Standard semantic search (k=6)")
+        logger.debug(f"Standard semantic search (k=6)")
         return vectorstore.similarity_search(query, k=6)
 
 
@@ -214,27 +227,35 @@ def format_docs(docs):
     return "\n\n".join(out)
 
 
-# Load abstract and title data files
-try:
-    abstract_file = os.path.join("index", "data_abstract.txt")
-    title_file = os.path.join("index", "data_title_url.txt")
+# Load abstract and title data files using absolute paths
+def _load_data_files():
+    """Load abstract and title data files at module initialization"""
+    abstract_file = os.path.join(BASE_DIR, "index", "data_abstract.txt")
+    title_file = os.path.join(BASE_DIR, "index", "data_title_url.txt")
     
-    file_content1 = ""
-    file_content2 = ""
+    content1 = ""
+    content2 = ""
     
-    if os.path.exists(abstract_file):
-        with open(abstract_file, "r", encoding="utf-8") as f1:
-            file_content1 = f1.read()
-            print(f"✅ Loaded data_abstract.txt")
+    try:
+        if os.path.exists(abstract_file):
+            with open(abstract_file, "r", encoding="utf-8") as f1:
+                content1 = f1.read()
+                logger.info("Loaded data_abstract.txt")
+        else:
+            logger.warning(f"data_abstract.txt not found at {abstract_file}")
+        
+        if os.path.exists(title_file):
+            with open(title_file, "r", encoding="utf-8") as f2:
+                content2 = f2.read()
+                logger.info("Loaded data_title_url.txt")
+        else:
+            logger.warning(f"data_title_url.txt not found at {title_file}")
+    except Exception as e:
+        logger.warning(f"Could not load data files: {e}")
     
-    if os.path.exists(title_file):
-        with open(title_file, "r", encoding="utf-8") as f2:
-            file_content2 = f2.read()
-            print(f"✅ Loaded data_title_url.txt")
-except Exception as e:
-    print(f"⚠️ Could not load data files: {e}")
-    file_content1 = ""
-    file_content2 = ""
+    return content1, content2
+
+file_content1, file_content2 = _load_data_files()
 
 
 SYSTEM_PROMPT = f"""
@@ -314,19 +335,22 @@ def build_chain(embedding_type=None) -> Tuple:
     return chain, vectorstore
 
 
-def build_streaming_chain(persist_dir="index"):
+def build_streaming_chain(persist_dir=None):
     """
     Build RAG chain with streaming support and smart retrieval for Flask
     Uses same configuration as build_chain but with streaming enabled
     Returns: (chain, vectorstore)
     """
+    if persist_dir is None:
+        persist_dir = os.path.join(BASE_DIR, "index")
+    
     try:
-        print("🚀 Building streaming RAG chain with smart retrieval...")
+        logger.info("Building streaming RAG chain with smart retrieval...")
         
         # Load vectorstore using the same function as build_chain
         vectorstore = load_retriever(persist_dir)
         
-        print("🤖 Initializing Gemini LLM with streaming...")
+        logger.info("Initializing Gemini LLM with streaming...")
         # Create LLM with streaming - using same model as rag_chain.py
         llm = ChatGoogleGenerativeAI(
             model="gemini-2.5-flash",
@@ -340,11 +364,11 @@ def build_streaming_chain(persist_dir="index"):
             formatted = format_docs(docs)
             
             # Log context size to detect overload
-            print(f"📏 Context size: {len(formatted)} chars, {len(docs)} docs")
+            logger.debug(f"Context size: {len(formatted)} chars, {len(docs)} docs")
             
             # Warn if context is too large
             if len(formatted) > 50000:
-                print(f"⚠️  Large context detected ({len(formatted)} chars) - may cause truncation")
+                logger.warning(f"Large context detected ({len(formatted)} chars) - may cause truncation")
             
             return formatted
         
@@ -359,13 +383,10 @@ def build_streaming_chain(persist_dir="index"):
             | StrOutputParser()
         )
         
-        print("✅ Streaming RAG chain with smart retrieval built successfully")
-        print(f"   - Model: gemini-2.5-flash")
-        print(f"   - Temperature: 0")
-        print(f"   - Streaming: enabled")
+        logger.info("Streaming RAG chain built successfully (model: gemini-2.5-flash, streaming: enabled)")
         return chain, vectorstore
         
     except Exception as e:
-        print(f"❌ Failed to build streaming chain: {str(e)}")
-        print(f"📋 Traceback: {traceback.format_exc()}")
+        logger.error(f"Failed to build streaming chain: {str(e)}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
         raise e

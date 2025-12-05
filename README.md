@@ -2,6 +2,8 @@
 
 This project is a simple chatbot application built using Flask. It provides a user-friendly chat interface where users can interact with the chatbot in real-time.
 
+source venv/bin/activate && DEBUG=False PORT=5010 python run.py
+
 ## Project Structure
 
 ```

@@ -3,7 +3,11 @@ import json
 import time
 import traceback
 import threading
+import logging
 from functools import wraps
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 bp = Blueprint('main', __name__)
 
@@ -174,7 +178,7 @@ def chat_api():
         user_message = data.get('message', '')
         chat_id = data.get('chat_id', None)
         
-        print(f"📨 Received message: {user_message[:100]}...")
+        logger.debug(f"Received message: {user_message[:100]}...")
         
         if not is_allowed(user_message):
             return jsonify({'error': 'Sorry, I can\'t assist with that.'}), 400
@@ -184,21 +188,29 @@ def chat_api():
             return jsonify({'error': 'User not authenticated'}), 401
         
         # Create new chat session if needed (lightweight operation)
+        # If database is unavailable, still allow chatting with a temporary session
+        db_available = True
         if not chat_id:
             title = user_message[:50] + ('...' if len(user_message) > 50 else '')
             chat_session, status = auth_service.create_chat_session(user_id, title)
             
-            if status != 200:
-                print(f"❌ Failed to create chat session: {chat_session}")
-                return jsonify({'error': 'Failed to create chat session'}), 500
-            
-            chat_id = chat_session['id']
-            print(f"✅ Created new chat session: {chat_id}")
+            if status == 200:
+                chat_id = chat_session['id']
+                logger.debug(f"Created new chat session: {chat_id}")
+            elif status == 503:
+                # Database unavailable - use temporary session ID
+                import uuid
+                chat_id = f"temp_{uuid.uuid4().hex[:8]}"
+                db_available = False
+                logger.warning(f"Database unavailable, using temporary session: {chat_id}")
+            else:
+                logger.error(f"Failed to create chat session: {chat_session}")
+                return jsonify({'error': 'Failed to create chat session. Please try again.'}), 500
         
         chain = current_app.config.get('RAG_CHAIN')
         
         if chain is None:
-            print("⚠️  RAG chain not available, using fallback")
+            logger.warning("RAG chain not available, using fallback")
             def generate_fallback():
                 yield json.dumps({'chat_id': chat_id}) + '\n'
                 response = "I apologize, but the AI system is currently unavailable. Please try again later."
@@ -214,35 +226,40 @@ def chat_api():
         
         def save_messages_async():
             """Save messages to database in background thread AFTER streaming completes"""
+            # Skip saving for temporary sessions (database unavailable)
+            if chat_id.startswith('temp_'):
+                logger.debug("Skipping message save for temporary session")
+                return
+            
             try:
-                print(f"💾 Saving messages to database in background...")
+                logger.debug("Saving messages to database in background...")
                 
                 # Save user message
                 msg_result, msg_status = auth_service.save_chat_message(chat_id, 'user', user_message)
                 if msg_status == 200:
-                    print(f"✅ User message saved")
+                    logger.debug("User message saved")
                 else:
-                    print(f"⚠️  Failed to save user message: {msg_result}")
+                    logger.warning(f"Failed to save user message: {msg_result}")
                 
                 # Save bot response (even if partial due to error)
                 if bot_response:
                     msg_result, msg_status = auth_service.save_chat_message(chat_id, 'bot', bot_response)
                     if msg_status == 200:
-                        print(f"✅ Bot response saved ({len(bot_response)} chars)")
+                        logger.debug(f"Bot response saved ({len(bot_response)} chars)")
                     else:
-                        print(f"⚠️  Failed to save bot response: {msg_result}")
+                        logger.warning(f"Failed to save bot response: {msg_result}")
                         
             except Exception as e:
-                print(f"❌ Error saving messages in background: {str(e)}")
-                print(f"📋 Traceback: {traceback.format_exc()}")
+                logger.error(f"Error saving messages in background: {str(e)}")
+                logger.debug(f"Traceback: {traceback.format_exc()}")
         
         def generate():
             nonlocal bot_response, stream_error
             try:
-                print(f"🔄 Starting streaming with enhanced monitoring...")
+                logger.debug("Starting streaming with enhanced monitoring...")
                 chunk_count = 0
                 start_time = time.time()
-                max_chunks = 10000  # ✅ Safety limit to prevent infinite loops
+                max_chunks = 10000  # Safety limit to prevent infinite loops
                 last_chunk_time = start_time
                 
                 # Send chat_id FIRST - immediate flush
@@ -255,15 +272,15 @@ def chat_api():
                         chunk_count += 1
                         current_time = time.time()
                         
-                        # ✅ Safety check for max chunks
+                        # Safety check for max chunks
                         if chunk_count > max_chunks:
-                            print(f"⚠️  Hit max chunk limit ({max_chunks}) - stopping stream")
+                            logger.warning(f"Hit max chunk limit ({max_chunks}) - stopping stream")
                             stream_error = "response_too_long"
                             break
                         
-                        # ✅ Timeout check (if no chunks for 30 seconds)
+                        # Timeout check (if no chunks for 30 seconds)
                         if current_time - last_chunk_time > 30:
-                            print(f"⚠️  Stream timeout - no chunks for 30s")
+                            logger.warning("Stream timeout - no chunks for 30s")
                             stream_error = "stream_timeout"
                             break
                         
@@ -272,15 +289,15 @@ def chat_api():
                         # Yield each token immediately - no buffering
                         yield json.dumps({'token': chunk}) + '\n'
                         
-                        # ✅ Log progress every 100 chunks
+                        # Log progress every 100 chunks (debug level)
                         if chunk_count % 100 == 0:
                             elapsed = current_time - start_time
-                            print(f"📊 Progress: {chunk_count} chunks, {len(bot_response)} chars, {elapsed:.1f}s")
+                            logger.debug(f"Progress: {chunk_count} chunks, {len(bot_response)} chars, {elapsed:.1f}s")
                 
                 elapsed_time = time.time() - start_time
-                print(f"✅ Stream completed: {chunk_count} chunks, {len(bot_response)} chars in {elapsed_time:.2f}s")
+                logger.debug(f"Stream completed: {chunk_count} chunks, {len(bot_response)} chars in {elapsed_time:.2f}s")
                 
-                # ✅ Send completion signal with metadata
+                # Send completion signal with metadata
                 completion_data = {
                     'done': True,
                     'chunks': chunk_count,
@@ -290,7 +307,7 @@ def chat_api():
                 
                 if stream_error:
                     completion_data['warning'] = stream_error
-                    print(f"⚠️  Stream completed with warning: {stream_error}")
+                    logger.warning(f"Stream completed with warning: {stream_error}")
                 
                 yield json.dumps(completion_data) + '\n'
                 
@@ -298,15 +315,15 @@ def chat_api():
                 threading.Thread(target=save_messages_async, daemon=True).start()
                 
             except Exception as e:
-                # ✅ Better error handling with actual error message
+                # Better error handling with actual error message
                 error_type = type(e).__name__
                 error_msg = str(e)
-                print(f"❌ Error in RAG chain ({error_type}): {error_msg}")
-                print(f"📋 Traceback: {traceback.format_exc()}")
+                logger.error(f"Error in RAG chain ({error_type}): {error_msg}")
+                logger.debug(f"Traceback: {traceback.format_exc()}")
                 
                 # If we have partial response, send it
                 if bot_response:
-                    print(f"⚠️  Sending partial response ({len(bot_response)} chars)")
+                    logger.warning(f"Sending partial response ({len(bot_response)} chars)")
                 
                 # Send error with details
                 error_data = {
@@ -333,9 +350,9 @@ def chat_api():
         return Response(generate(), mimetype='application/json')
         
     except Exception as e:
-        print(f"❌ Error in chat_api: {str(e)}")
-        print(f"📋 Traceback: {traceback.format_exc()}")
-        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+        logger.error(f"Error in chat_api: {str(e)}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
+        return jsonify({'error': 'Internal server error'}), 500
 
 @bp.route('/api/chat/history', methods=['GET'])
 @login_required
@@ -422,5 +439,5 @@ def search_documents():
         return jsonify({'results': results})
     
     except Exception as e:
-        print(f"❌ Search error: {e}")
+        logger.error(f"Search error: {e}")
         return jsonify({'error': 'Search failed'}), 500

@@ -2,6 +2,11 @@ from supabase import create_client, Client
 from flask import current_app
 import re
 from datetime import datetime
+import logging
+
+# Configure logger
+logger = logging.getLogger(__name__)
+
 
 class AuthService:
     def __init__(self):
@@ -22,15 +27,15 @@ class AuthService:
         # Initialize admin client if service key is available
         if service_key:
             self.admin_supabase = create_client(url, service_key)
-            print("✅ Supabase clients initialized (anon + service)")
+            logger.info("Supabase clients initialized (anon + service)")
         else:
             self.admin_supabase = self.supabase
-            print("⚠️  Supabase client initialized (anon only - service key recommended)")
+            logger.warning("Supabase client initialized (anon only - service key recommended)")
     
     def is_cspc_email(self, email: str) -> bool:
         """Check if email is from CSPC domain"""
         domains = current_app.config.get('ALLOWED_EMAIL_DOMAINS', ['@cspc.edu.ph', '@my.cspc.edu.ph'])
-        return any(email.lower().endswith(domain) for domain in domains)
+        return any(email.lower().endswith(domain.strip()) for domain in domains)
     
     def validate_email(self, email: str) -> tuple:
         """Validate email format and domain"""
@@ -93,7 +98,7 @@ class AuthService:
                 
         except Exception as e:
             error_message = str(e)
-            print(f"❌ Signup error: {error_message}")
+            logger.error(f"Signup error: {error_message}")
             
             if "already registered" in error_message.lower() or "user already exists" in error_message.lower():
                 return {"error": "This email is already registered. Please sign in instead."}, 400
@@ -129,7 +134,7 @@ class AuthService:
                 
         except Exception as e:
             error_message = str(e)
-            print(f"❌ Signin error: {error_message}")
+            logger.error(f"Signin error: {error_message}")
             
             if "invalid login credentials" in error_message.lower():
                 return {"error": "Invalid email or password. Please check your credentials and try again."}, 401
@@ -157,7 +162,7 @@ class AuthService:
                 return {"error": "Failed to generate Google OAuth URL"}, 500
             
         except Exception as e:
-            print(f"❌ Google OAuth error: {str(e)}")
+            logger.error(f"Google OAuth error: {str(e)}")
             return {"error": f"Google sign in failed: {str(e)}"}, 500
     
     def exchange_code_for_session(self, code: str):
@@ -181,7 +186,7 @@ class AuthService:
                 return {"error": "Failed to exchange code for session"}, 400
                 
         except Exception as e:
-            print(f"❌ Code exchange error: {str(e)}")
+            logger.error(f"Code exchange error: {str(e)}")
             return {"error": f"Authentication failed: {str(e)}"}, 500
     
     def sign_out(self):
@@ -213,6 +218,15 @@ class AuthService:
     # Chat Session Management Methods (using service key to bypass RLS)
     # ============================================
     
+    def _is_service_unavailable(self, error_str: str) -> bool:
+        """Check if error is due to service unavailability"""
+        unavailable_indicators = [
+            'cloudflare', '500 internal server error', '502', '503', '504',
+            'connection', 'timeout', 'unavailable'
+        ]
+        error_lower = error_str.lower()
+        return any(indicator in error_lower for indicator in unavailable_indicators)
+    
     def create_chat_session(self, user_id: str, title: str):
         """Create a new chat session (using service key to bypass RLS)"""
         try:
@@ -223,17 +237,20 @@ class AuthService:
             }).execute()
             
             if response.data and len(response.data) > 0:
-                print(f"✅ Created chat session: {response.data[0]['id']}")
+                logger.debug(f"Created chat session: {response.data[0]['id']}")
                 return response.data[0], 200
             
-            print("❌ No data returned from insert")
+            logger.error("No data returned from insert")
             return {"error": "Failed to create chat session"}, 500
             
         except Exception as e:
-            print(f"❌ Create chat session error: {str(e)}")
-            if hasattr(e, '__dict__'):
-                print(f"📋 Error details: {e.__dict__}")
-            return {"error": f"Database error: {str(e)}"}, 500
+            error_str = str(e)
+            logger.error(f"Create chat session error: {error_str}")
+            
+            if self._is_service_unavailable(error_str):
+                return {"error": "Database service is temporarily unavailable. Please try again in a moment."}, 503
+            
+            return {"error": "Failed to create chat session. Please try again."}, 500
     
     def get_user_chat_sessions(self, user_id: str):
         """Get all chat sessions for a user"""
@@ -244,12 +261,17 @@ class AuthService:
                 .order('updated_at', desc=True)\
                 .execute()
             
-            print(f"✅ Fetched {len(response.data)} chat sessions")
+            logger.debug(f"Fetched {len(response.data)} chat sessions")
             return response.data, 200
             
         except Exception as e:
-            print(f"❌ Get chat sessions error: {str(e)}")
-            return {"error": f"Database error: {str(e)}"}, 500
+            error_str = str(e)
+            logger.error(f"Get chat sessions error: {error_str}")
+            
+            if self._is_service_unavailable(error_str):
+                return [], 200  # Return empty list instead of error for better UX
+            
+            return {"error": "Failed to load chat history"}, 500
     
     def save_chat_message(self, chat_session_id: str, role: str, content: str):
         """Save a chat message"""
@@ -262,21 +284,31 @@ class AuthService:
             }).execute()
             
             if response.data and len(response.data) > 0:
-                print(f"✅ Saved {role} message to chat {chat_session_id}")
+                logger.debug(f"Saved {role} message to chat {chat_session_id}")
                 
                 # Update chat session timestamp
-                self.admin_supabase.table('chat_sessions')\
-                    .update({'updated_at': datetime.utcnow().isoformat()})\
-                    .eq('id', chat_session_id)\
-                    .execute()
+                try:
+                    self.admin_supabase.table('chat_sessions')\
+                        .update({'updated_at': datetime.utcnow().isoformat()})\
+                        .eq('id', chat_session_id)\
+                        .execute()
+                except Exception:
+                    pass  # Non-critical, don't fail if timestamp update fails
                 
                 return response.data[0], 200
             
             return {"error": "Failed to save message"}, 500
             
         except Exception as e:
-            print(f"❌ Save message error: {str(e)}")
-            return {"error": f"Database error: {str(e)}"}, 500
+            error_str = str(e)
+            logger.error(f"Save message error: {error_str}")
+            
+            if self._is_service_unavailable(error_str):
+                # Log but don't fail - message saving is non-critical for UX
+                logger.warning("Database unavailable, message not saved")
+                return {"warning": "Message not saved due to service unavailability"}, 200
+            
+            return {"error": "Failed to save message"}, 500
     
     def get_chat_messages(self, chat_session_id: str):
         """Get all messages for a chat session"""
@@ -287,11 +319,11 @@ class AuthService:
                 .order('created_at', desc=False)\
                 .execute()
             
-            print(f"✅ Fetched {len(response.data)} messages")
+            logger.debug(f"Fetched {len(response.data)} messages")
             return response.data, 200
             
         except Exception as e:
-            print(f"❌ Get messages error: {str(e)}")
+            logger.error(f"Get messages error: {str(e)}")
             return {"error": f"Database error: {str(e)}"}, 500
     
     def delete_chat_session(self, chat_session_id: str):
@@ -302,11 +334,11 @@ class AuthService:
                 .eq('id', chat_session_id)\
                 .execute()
             
-            print(f"✅ Deleted chat session: {chat_session_id}")
+            logger.debug(f"Deleted chat session: {chat_session_id}")
             return {"message": "Chat session deleted successfully"}, 200
             
         except Exception as e:
-            print(f"❌ Delete chat session error: {str(e)}")
+            logger.error(f"Delete chat session error: {str(e)}")
             return {"error": f"Database error: {str(e)}"}, 500
     
     def update_chat_session_title(self, chat_session_id: str, title: str):
@@ -318,13 +350,13 @@ class AuthService:
                 .execute()
             
             if response.data and len(response.data) > 0:
-                print(f"✅ Updated chat title: {chat_session_id}")
+                logger.debug(f"Updated chat title: {chat_session_id}")
                 return response.data[0], 200
             
             return {"error": "Failed to update title"}, 500
             
         except Exception as e:
-            print(f"❌ Update title error: {str(e)}")
+            logger.error(f"Update title error: {str(e)}")
             return {"error": f"Database error: {str(e)}"}, 500
 
 auth_service = AuthService()

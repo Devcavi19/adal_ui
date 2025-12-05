@@ -221,34 +221,6 @@ if (signupForm) {
     });
 }
 
-// Google Sign In/Up
-const googleSigninBtn = document.getElementById('google-signin-btn');
-const googleSignupBtn = document.getElementById('google-signup-btn');
-
-async function handleGoogleAuth() {
-    try {
-        const response = await fetch('/api/auth/google');
-        const data = await response.json();
-        
-        if (response.ok && data.url) {
-            window.location.href = data.url;
-        } else {
-            showError('Google authentication failed');
-        }
-    } catch (error) {
-        console.error('Google auth error:', error);
-        showError('An error occurred with Google authentication');
-    }
-}
-
-if (googleSigninBtn) {
-    googleSigninBtn.addEventListener('click', handleGoogleAuth);
-}
-
-if (googleSignupBtn) {
-    googleSignupBtn.addEventListener('click', handleGoogleAuth);
-}
-
 // Check for auth errors in URL
 const urlParams = new URLSearchParams(window.location.search);
 const error = urlParams.get('error');
