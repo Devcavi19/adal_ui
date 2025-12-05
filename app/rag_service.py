@@ -141,8 +141,8 @@ def smart_retrieve(query: str, vectorstore):
     
     if is_exhaustive:
         # Exhaustive query: retrieve more docs and filter by similarity threshold
-        logger.debug(f"Detected exhaustive query - using adaptive retrieval (k=50)")
-        docs_with_scores = vectorstore.similarity_search_with_score(query, k=50)
+        logger.debug(f"Detected exhaustive query - using adaptive retrieval (k=100)")
+        docs_with_scores = vectorstore.similarity_search_with_score(query, k=100)
         
         # Debug: Show score distribution
         if docs_with_scores:
@@ -167,8 +167,8 @@ def smart_retrieve(query: str, vectorstore):
         return filtered_docs
     else:
         # Standard semantic search: top-k most relevant
-        logger.debug(f"Standard semantic search (k=6)")
-        return vectorstore.similarity_search(query, k=6)
+        logger.debug(f"Standard semantic search (k=50)")
+        return vectorstore.similarity_search(query, k=50)
 
 
 def format_docs(docs):
