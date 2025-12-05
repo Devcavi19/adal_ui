@@ -60,9 +60,9 @@ def create_app(config_class=None):
     # Set the API key in environment for langchain
     os.environ["GOOGLE_API_KEY"] = google_api_key
     
-    # Initialize RAG chain (cached globally)
+    # Initialize RAG components (cached globally)
     try:
-        logger.info("Initializing RAG chain...")
+        logger.info("Initializing RAG components...")
         from .rag_service import build_streaming_chain
         
         # Check if index exists
@@ -71,15 +71,15 @@ def create_app(config_class=None):
             logger.warning(f"Index path not found: {index_path}")
             logger.debug(f"Current directory: {os.getcwd()}")
         
-        chain, vectorstore = build_streaming_chain(persist_dir=index_path)
-        app.config['RAG_CHAIN'] = chain
+        llm, vectorstore = build_streaming_chain(persist_dir=index_path)
+        app.config['RAG_LLM'] = llm
         app.config['RAG_VECTORSTORE'] = vectorstore
-        logger.info("RAG chain initialized successfully")
+        logger.info("RAG components initialized successfully")
     except Exception as e:
-        logger.error(f"Failed to initialize RAG chain: {str(e)}")
+        logger.error(f"Failed to initialize RAG components: {str(e)}")
         logger.debug(f"Traceback: {traceback.format_exc()}")
         logger.warning("App will continue but RAG features may not work")
-        app.config['RAG_CHAIN'] = None
+        app.config['RAG_LLM'] = None
         app.config['RAG_VECTORSTORE'] = None
     
     # Register blueprints

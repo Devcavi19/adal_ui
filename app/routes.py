@@ -165,12 +165,12 @@ def api_get_user():
         return jsonify({'user': session['user']}), 200
     return jsonify({'error': 'Not authenticated'}), 401
 
-# Chat API Routes - OPTIMIZED FOR STREAMING WITH IMPROVED ERROR HANDLING
+# Chat API Routes - OPTIMIZED FOR STREAMING WITH CONVERSATION HISTORY
 @bp.route('/api/chat', methods=['POST'])
 @login_required
 def chat_api():
-    """Handle chat messages with OPTIMIZED streaming and better error handling"""
-    from .rag_service import is_allowed
+    """Handle chat messages with streaming and conversation history support"""
+    from .rag_service import is_allowed, stream_with_history
     from .auth_service import auth_service
     
     try:
@@ -190,6 +190,8 @@ def chat_api():
         # Create new chat session if needed (lightweight operation)
         # If database is unavailable, still allow chatting with a temporary session
         db_available = True
+        conversation_history = []
+        
         if not chat_id:
             title = user_message[:50] + ('...' if len(user_message) > 50 else '')
             chat_session, status = auth_service.create_chat_session(user_id, title)
@@ -206,11 +208,29 @@ def chat_api():
             else:
                 logger.error(f"Failed to create chat session: {chat_session}")
                 return jsonify({'error': 'Failed to create chat session. Please try again.'}), 500
+        else:
+            # Existing chat session - fetch conversation history
+            if db_available and not chat_id.startswith('temp_'):
+                try:
+                    messages, msg_status = auth_service.get_chat_messages(chat_id)
+                    if msg_status == 200 and messages:
+                        # Convert to conversation history format (last 10 messages for context)
+                        for msg in messages[-10:]:
+                            role = "user" if msg.get('role') == 'user' else "assistant"
+                            conversation_history.append({
+                                "role": role,
+                                "content": msg.get('content', '')
+                            })
+                        logger.debug(f"Loaded {len(conversation_history)} messages for context")
+                except Exception as e:
+                    logger.warning(f"Could not fetch conversation history: {e}")
         
-        chain = current_app.config.get('RAG_CHAIN')
+        # Get RAG components
+        vectorstore = current_app.config.get('RAG_VECTORSTORE')
+        llm = current_app.config.get('RAG_LLM')
         
-        if chain is None:
-            logger.warning("RAG chain not available, using fallback")
+        if vectorstore is None or llm is None:
+            logger.warning("RAG components not available, using fallback")
             def generate_fallback():
                 yield json.dumps({'chat_id': chat_id}) + '\n'
                 response = "I apologize, but the AI system is currently unavailable. Please try again later."
@@ -256,7 +276,7 @@ def chat_api():
         def generate():
             nonlocal bot_response, stream_error
             try:
-                logger.debug("Starting streaming with enhanced monitoring...")
+                logger.debug("Starting streaming with conversation history...")
                 chunk_count = 0
                 start_time = time.time()
                 max_chunks = 10000  # Safety limit to prevent infinite loops
@@ -265,8 +285,8 @@ def chat_api():
                 # Send chat_id FIRST - immediate flush
                 yield json.dumps({'chat_id': chat_id}) + '\n'
                 
-                # Stream the response with monitoring
-                for chunk in chain.stream(user_message):
+                # Stream the response with conversation history
+                for chunk in stream_with_history(user_message, vectorstore, llm, conversation_history):
                     if chunk:
                         bot_response += chunk
                         chunk_count += 1

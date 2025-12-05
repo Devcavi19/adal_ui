@@ -275,6 +275,7 @@ CORE RESPONSIBILITIES:
 - Generate proper APA citations for thesis sources
 - Suggest related research based on semantic similarity
 - Handle both specific queries (returns top relevant results) and exhaustive queries (returns all matching results)
+- Maintain conversation context and understand follow-up questions
 
 RESPONSE GUIDELINES:
 - Always answer based STRICTLY on the provided context
@@ -285,6 +286,7 @@ RESPONSE GUIDELINES:
 - Include proper APA citations at the end using format: [Author, Year. Title. Department, CSPC]
 - If the question is too vague, ask clarifying questions to narrow down the topic
 - For "give me all" or "list all" queries, provide a comprehensive list of ALL matching theses found in context
+- Use conversation history to understand context when users ask follow-up questions like "tell me more", "what else", "can you explain that", etc.
 
 QUERY TYPES TO HANDLE:
 - "What is [thesis title] about?" → Provide abstract and key findings
@@ -294,6 +296,7 @@ QUERY TYPES TO HANDLE:
 - "How many theses about [topic]?" → Count and list all matching theses
 - "Who wrote about [subject]?" → Identify authors and their work
 - "What department studies [field]?" → Identify relevant departments and their research
+- Follow-up questions → Use conversation history to understand context
 
 CITATION FORMAT:
 Use APA style
@@ -301,10 +304,45 @@ Example: [Santos et al. AI in Education. 2023. Computer Science Dept, CSPC]
 
 Remember: You are helping unlock CSPC's academic knowledge for the research community."""
 
-prompt = ChatPromptTemplate.from_messages([
+# Prompt template for conversational RAG (with history)
+conversational_prompt = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_PROMPT),
+    ("human", """Previous conversation:
+{chat_history}
+
+Current question: {question}
+
+Relevant context from knowledge base:
+{context}
+
+Please answer the current question, taking into account the conversation history above for context."""),
+])
+
+# Simple prompt for single questions (no history)
+simple_prompt = ChatPromptTemplate.from_messages([
     ("system", SYSTEM_PROMPT),
     ("human", "Question: {question}\n\nContext:\n{context}"),
 ])
+
+# Keep original prompt for backward compatibility
+prompt = simple_prompt
+
+
+def format_chat_history(history: list) -> str:
+    """Format chat history for the prompt"""
+    if not history:
+        return "No previous conversation."
+    
+    formatted = []
+    for msg in history[-6:]:  # Keep last 6 messages (3 exchanges) for context
+        role = "User" if msg.get('role') == 'user' else "Assistant"
+        content = msg.get('content', '')
+        # Truncate long messages to save context space
+        if len(content) > 500:
+            content = content[:500] + "..."
+        formatted.append(f"{role}: {content}")
+    
+    return "\n".join(formatted)
 
 
 def build_chain(embedding_type=None) -> Tuple:
@@ -358,35 +396,136 @@ def build_streaming_chain(persist_dir=None):
             streaming=True
         )
         
-        # Create custom retrieval function that uses smart_retrieve
-        def custom_retrieve(question: str) -> str:
-            docs = smart_retrieve(question, vectorstore)
-            formatted = format_docs(docs)
-            
-            # Log context size to detect overload
-            logger.debug(f"Context size: {len(formatted)} chars, {len(docs)} docs")
-            
-            # Warn if context is too large
-            if len(formatted) > 50000:
-                logger.warning(f"Large context detected ({len(formatted)} chars) - may cause truncation")
-            
-            return formatted
-        
-        # Build chain with smart retrieval - using same structure as rag_chain.py
-        chain = (
-            {
-                "context": lambda x: custom_retrieve(x),
-                "question": RunnablePassthrough()
-            }
-            | prompt
-            | llm
-            | StrOutputParser()
-        )
-        
         logger.info("Streaming RAG chain built successfully (model: gemini-2.5-flash, streaming: enabled)")
-        return chain, vectorstore
+        return llm, vectorstore
         
     except Exception as e:
         logger.error(f"Failed to build streaming chain: {str(e)}")
         logger.debug(f"Traceback: {traceback.format_exc()}")
         raise e
+
+
+# Patterns that indicate a follow-up question needing context reconstruction
+FOLLOWUP_PATTERNS = [
+    "tell me more", "what else", "can you explain", "elaborate", "more details",
+    "what about", "how about", "and what", "also", "furthermore", "additionally",
+    "that", "this", "it", "them", "those", "these", "the same", "similar",
+    "related", "another", "other", "else", "continue", "go on", "expand",
+    "why", "how", "when", "where", "who"  # Short contextual questions
+]
+
+
+def is_followup_question(question: str) -> bool:
+    """
+    Detect if a question is likely a follow-up that needs context reconstruction.
+    """
+    question_lower = question.lower().strip()
+    
+    # Very short questions are often follow-ups
+    if len(question_lower.split()) <= 4:
+        return True
+    
+    # Check for follow-up patterns
+    for pattern in FOLLOWUP_PATTERNS:
+        if pattern in question_lower:
+            return True
+    
+    # Questions starting with pronouns often need context
+    if question_lower.startswith(('it ', 'that ', 'this ', 'they ', 'what about', 'how about')):
+        return True
+    
+    return False
+
+
+def reconstruct_query(question: str, chat_history: list, llm) -> str:
+    """
+    Use LLM to reconstruct a standalone search query from a follow-up question.
+    This combines the conversation context with the current question to create
+    a query that can be used for database retrieval.
+    """
+    if not chat_history:
+        return question
+    
+    # Format recent history for context (last 4 messages = 2 exchanges)
+    history_text = ""
+    for msg in chat_history[-4:]:
+        role = "User" if msg.get('role') == 'user' else "Assistant"
+        content = msg.get('content', '')[:300]  # Truncate for efficiency
+        history_text += f"{role}: {content}\n"
+    
+    reconstruction_prompt = f"""Given this conversation history:
+{history_text}
+
+The user now asks: "{question}"
+
+Rewrite this as a standalone search query that captures what the user is looking for.
+The query should be specific enough to search a thesis database.
+Only output the reconstructed query, nothing else.
+
+Reconstructed query:"""
+    
+    try:
+        # Use LLM to reconstruct (non-streaming for speed)
+        response = llm.invoke(reconstruction_prompt)
+        reconstructed = response.content.strip()
+        
+        # Sanity check - if reconstruction is too different or empty, use original
+        if len(reconstructed) < 5 or len(reconstructed) > 500:
+            return question
+        
+        logger.info(f"Query reconstructed: '{question}' -> '{reconstructed}'")
+        return reconstructed
+    except Exception as e:
+        logger.warning(f"Query reconstruction failed: {e}, using original question")
+        return question
+
+
+def stream_with_history(question: str, vectorstore, llm, chat_history: list = None):
+    """
+    Stream a response with conversation history support.
+    
+    Args:
+        question: The current user question
+        vectorstore: The FAISS vectorstore for retrieval
+        llm: The language model (Gemini)
+        chat_history: List of previous messages [{"role": "user/assistant", "content": "..."}]
+    
+    Yields:
+        Chunks of the response
+    """
+    # Determine the search query - reconstruct if it's a follow-up question
+    search_query = question
+    if chat_history and len(chat_history) > 0 and is_followup_question(question):
+        logger.debug(f"Detected follow-up question, reconstructing query...")
+        search_query = reconstruct_query(question, chat_history, llm)
+    
+    # Get relevant context using the (possibly reconstructed) query
+    docs = smart_retrieve(search_query, vectorstore)
+    context = format_docs(docs)
+    
+    logger.debug(f"Search query: '{search_query}', Context size: {len(context)} chars, {len(docs)} docs")
+    
+    # Choose prompt based on whether we have history
+    if chat_history and len(chat_history) > 0:
+        formatted_history = format_chat_history(chat_history)
+        prompt_to_use = conversational_prompt
+        chain_input = {
+            "context": context,
+            "question": question,  # Use original question for response generation
+            "chat_history": formatted_history
+        }
+        logger.debug(f"Using conversational prompt with {len(chat_history)} history messages")
+    else:
+        prompt_to_use = simple_prompt
+        chain_input = {
+            "context": context,
+            "question": question
+        }
+        logger.debug("Using simple prompt (no history)")
+    
+    # Build and run chain
+    chain = prompt_to_use | llm | StrOutputParser()
+    
+    # Stream the response
+    for chunk in chain.stream(chain_input):
+        yield chunk
