@@ -67,7 +67,7 @@ jobs:
 
       - name: Configure App Service settings for ML workload
         run: |
-          az webapp config appsettings set --name adall --resource-group adal-ui-rg \
+          az webapp config appsettings set --name adall --resource-group adal-rg \
             --settings \
             WEBSITES_CONTAINER_START_TIME_LIMIT=1800 \
             SCM_COMMAND_IDLE_TIMEOUT=1800
