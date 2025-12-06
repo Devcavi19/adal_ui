@@ -65,10 +65,18 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Configure App Service settings for ML workload
+        run: |
+          az webapp config appsettings set --name adall --resource-group adal-ui-rg \
+            --settings \
+            WEBSITES_CONTAINER_START_TIME_LIMIT=1800 \
+            SCM_COMMAND_IDLE_TIMEOUT=1800
+
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
         id: deploy-to-webapp
         with:
           app-name: 'adall'
           slot-name: 'Production'
+          startup-command: 'bash startup.sh'
           
