@@ -59,13 +59,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: python-app
-      
-      - name: Login to Azure
-        uses: azure/login@v2
+
+      - name: Log in to Azure CLI using service principal
+        uses: azure/login@v1
         with:
-          client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_6D861FE5E2CD40EEB93F203707A628C6 }}
-          tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_20657DF96E704777B62FF18252120B0D }}
-          subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_B859E5EC12FF497E90585C0FE2A6D2C0 }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: 'Deploy to Azure Web App'
         uses: azure/webapps-deploy@v3
